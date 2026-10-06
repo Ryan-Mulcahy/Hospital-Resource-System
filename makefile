@@ -4,10 +4,10 @@ LDFLAGS = -L$(shell brew --prefix)/lib -lraylib
 SRC     = $(wildcard *.c)
 
 hospital: $(SRC)
-      $(CC) $(CFLAGS) $(SRC) $(LDFLAGS) -o hospital
+	$(CC) $(CFLAGS) $(SRC) $(LDFLAGS) -o hospital
 
 run: hospital
-      ./hospital
+	./hospital
 
 clean:
-      rm -f hospital
+	rm -f hospital
