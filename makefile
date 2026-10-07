@@ -1,13 +1,25 @@
-CC      = cc
-CFLAGS  = -std=c99 -Wall -Wextra -I$(shell brew --prefix)/include
-LDFLAGS = -L$(shell brew --prefix)/lib -lraylib
 SRC     = $(wildcard *.c)
+CFLAGS  = -std=c99 -Wall -Wextra
 
-hospital: $(SRC)
-	$(CC) $(CFLAGS) $(SRC) $(LDFLAGS) -o hospital
+ifeq ($(OS),Windows_NT)
+    RAYLIB_BIN ?= C:/raylib/w64devkit/bin
+    export PATH := $(RAYLIB_BIN);$(PATH)
+    CC      = gcc
+    LDFLAGS = -lraylib -lopengl32 -lgdi32 -lwinmm
+    TARGET  = hospital.exe
+else
+    CC      = cc
+    BREW   := $(shell brew --prefix)
+    CFLAGS  += -I$(BREW)/include
+    LDFLAGS = -L$(BREW)/lib -lraylib
+    TARGET  = hospital
+endif
 
-run: hospital
-	./hospital
+$(TARGET): $(SRC)
+	$(CC) $(CFLAGS) $(SRC) $(LDFLAGS) -o $(TARGET)
+
+run: $(TARGET)
+	./$(TARGET)
 
 clean:
-	rm -f hospital
+	rm -f $(TARGET)
