@@ -23,7 +23,8 @@ static void draw_waiting_room(const Sim *sim)
 
     DrawText("WAITING ROOM", x0, 60, 20, C_INK);
     Rectangle room = { x0 - 15, y0 - 25, perRow * step + 15, 3 * step + 15 };
-    DrawRectangleRoundedLines(room, 0.15f, 8, C_LIGHT);
+    DrawRectangleRounded(room, 0.15f, 8, C_CARD);
+    DrawRectangleRoundedLines(room, 0.15f, 8, C_EDGE);
     
     //DrawRectangleLines(x0 - 15, y0 - 25, perRow * step + 15, 3 * step + 15, C_LIGHT);
 
