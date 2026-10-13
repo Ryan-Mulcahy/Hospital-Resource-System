@@ -22,7 +22,10 @@ static void draw_waiting_room(const Sim *sim)
     const int x0 = 40, y0 = 110, step = 34, perRow = 16, maxShown = 48;
 
     DrawText("WAITING ROOM", x0, 60, 20, DARKGRAY);
-    DrawRectangleLines(x0 - 15, y0 - 25, perRow * step + 15, 3 * step + 15, LIGHTGRAY);
+    Rectangle room = { x0 - 15, y0 - 25, perRow * step + 15, 3 * step + 15 };
+    DrawRectangleRoundedLines(room, 0.15f, 8, LIGHTGRAY);
+    
+    //DrawRectangleLines(x0 - 15, y0 - 25, perRow * step + 15, 3 * step + 15, LIGHTGRAY);
 
     int i = 0;
     for (const Patient *p = sim->waiting; p != NULL && i < maxShown; p = p->next, i++) {
@@ -48,8 +51,12 @@ static void draw_beds(const Sim *sim)
         int x = x0 + i * (w + gap);
         const Patient *p = sim->beds[i].occupant;
 
-        DrawRectangle(x, y0, w, h, (Color){ 235, 240, 246, 255 });
-        DrawRectangleLines(x, y0, w, h, GRAY);
+        Rectangle card = { x, y0, w, h };
+        DrawRectangleRounded(card, 0.25f, 8, (Color){ 235, 240, 246, 255 });
+        DrawRectangleRoundedLines(card, 0.25f, 8, GRAY);
+
+        //DrawRectangle(x, y0, w, h, (Color){ 235, 240, 246, 255 });
+        //DrawRectangleLines(x, y0, w, h, GRAY);
         DrawText(TextFormat("Bed %d", i + 1), x + 8, y0 + 8, 14, DARKGRAY);
 
         if (p == NULL) {
@@ -83,8 +90,11 @@ static void draw_doctors(const Sim *sim)
         int bed = sim->doctors[d].busyWithBed;
         bool busy = (bed != -1);
 
-        DrawRectangle(x, y0, w, h, busy ? DARKBLUE : (Color){ 235, 240, 246, 255 });
-        DrawRectangleLines(x, y0, w, h, GRAY);
+        Rectangle card = { x, y0, w, h };
+        DrawRectangleRounded(card, 0.4f, 8, busy ? DARKBLUE : (Color){ 235, 240, 246, 255 });
+        DrawRectangleRoundedLines(card, 0.4f, 8, GRAY);
+        //DrawRectangle(x, y0, w, h, busy ? DARKBLUE : (Color){ 235, 240, 246, 255 });
+        //DrawRectangleLines(x, y0, w, h, GRAY);
         DrawText(TextFormat("Dr %d", d + 1), x + 8, y0 + 6, 14, busy ? WHITE : DARKGRAY);
         DrawText(busy ? TextFormat("Bed %d", bed + 1) : "free",
                  x + 8, y0 + 22, 12, busy ? WHITE : LIGHTGRAY);
@@ -104,8 +114,12 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     }
     float avgWait = (sim->admitted > 0) ? sim->totalWait / (float)sim->admitted : 0.0f;
 
-    DrawRectangle(x - 20, y - 20, 300, 400, (Color){ 245, 247, 250, 255 });
-    DrawRectangleLines(x - 20, y - 20, 300, 400, LIGHTGRAY);
+    Rectangle panel = { x - 20, y - 20, 300, 400 };
+    DrawRectangleRounded(panel, 0.06f, 8, (Color){ 245, 247, 250, 255 });
+    DrawRectangleRoundedLines(panel, 0.06f, 8, LIGHTGRAY);
+
+    //DrawRectangle(x - 20, y - 20, 300, 400, (Color){ 245, 247, 250, 255 });
+    //DrawRectangleLines(x - 20, y - 20, 300, 400, LIGHTGRAY);
 
     DrawText("STATISTICS", x, y, 20, DARKGRAY);
     DrawText(TextFormat("Clock:      %.0f s", sim->clock),            x, y + 1 * line + 10, 18, BLACK);
