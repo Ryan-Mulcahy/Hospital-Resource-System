@@ -20,6 +20,10 @@ int main(void)
     InitWindow(SCREEN_W, SCREEN_H, "Hospital Resource Simulator");
     SetTargetFPS(60);
 
+    Image logo = LoadImage("logo.png");
+    
+    SetWindowIcon(logo); // works cause image background transparent
+
     Sim sim;
     sim_init(&sim);
 

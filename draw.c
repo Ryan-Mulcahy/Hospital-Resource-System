@@ -11,6 +11,12 @@ static Color severity_color(int severity)
     return GREEN;
 }
 
+static void draw_text_centered(const char *text, int cx, int cy, int size, int maxWidth, Color color)
+{   // Text centred on (cx, cy), Shrinks font till fits in maxWidth
+    while (size > 8 && MeasureText(text, size) > maxWidth) size--;
+    DrawText(text, cx - MeasureText(text, size) / 2, cy - size / 2, size, color);
+}
+
 static void draw_waiting_room(const Sim *sim)
 {
     const int x0 = 40, y0 = 110, step = 34, perRow = 16, maxShown = 48;
@@ -23,7 +29,7 @@ static void draw_waiting_room(const Sim *sim)
         int cx = x0 + (i % perRow) * step;
         int cy = y0 + (i / perRow) * step;
         DrawCircle(cx, cy, 13, severity_color(p->severity));
-        DrawText(TextFormat("%d", p->id), cx - 8, cy - 5, 10, WHITE);
+        draw_text_centered(TextFormat("%d", p->id), cx, cy, 12, 22, WHITE);
     }
 
     if (sim->waitingCount > maxShown) {
@@ -52,7 +58,7 @@ static void draw_beds(const Sim *sim)
         }
 
         DrawCircle(x + w / 2, y0 + 62, 20, severity_color(p->severity));
-        DrawText(TextFormat("%d", p->id), x + w / 2 - 8, y0 + 56, 12, WHITE);
+        draw_text_centered(TextFormat("%d", p->id), x + w / 2, y0 + 62, 16, 34, WHITE);
 
         // Who is treating them. "no doctor" means the progress bar is stalled.
         int d = sim_doctor_at(sim, i);
