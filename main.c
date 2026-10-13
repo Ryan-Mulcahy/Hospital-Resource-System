@@ -4,6 +4,7 @@
 //
 // Files:
 //   patient.c/.h  patient record and waiting queue
+//   doctor.c/.h   doctor treatment and bed management
 //   sim.c/.h      simulation state: arrivals, treatment, admission
 //   draw.c/.h     everything drawn on screen
 //   main.c        window, main loop and keyboard input
