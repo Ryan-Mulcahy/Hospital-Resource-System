@@ -11,7 +11,7 @@ static float random_arrival_gap(void)
 {
     // 0.6 to 1.8 seconds. Was 0.3 to 1.5, but with 4 doctors that's more
     // work than they can keep up with and the queue grows forever.
-    return (float)GetRandomValue(6, 18) / 10.0f;
+    return (float)GetRandomValue(5, 18) / 10.0f; // changed 6 to 5 for testing queue growth
 }
 
 static int random_severity(void)
