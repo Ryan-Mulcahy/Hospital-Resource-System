@@ -15,7 +15,7 @@ else
     TARGET  = hospital
 endif
 
-$(TARGET): $(SRC)
+$(TARGET): $(SRC) $(wildcard *.h)
 	$(CC) $(CFLAGS) $(SRC) $(LDFLAGS) -o $(TARGET)
 
 run: $(TARGET)
