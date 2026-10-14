@@ -4,10 +4,20 @@
 #ifndef SIM_H
 #define SIM_H
 
+#include <stdbool.h>
 #include "patient.h"
 
 #define BED_COUNT    6
 #define DOCTOR_COUNT 4
+
+// A day is two 12-hour shifts: the day shift from 07:00 to 19:00, then the
+// night shift from 19:00 to 07:00. At 1x speed each shift lasts SHIFT_LENGTH
+// real seconds, so each simulated second is 4 minutes of shift time.
+#define SHIFT_LENGTH   180.0f    // simulated seconds per shift
+#define SHIFT_HOURS    12
+#define DAY_START_HOUR 7
+
+typedef enum { SHIFT_DAY, SHIFT_NIGHT } ShiftType;
 
 typedef struct {
     Patient *occupant;       // NULL when the bed is free
@@ -17,25 +27,52 @@ typedef struct {
     int busyWithBed;         // index of the bed they're treating, or -1 if free
 } Doctor;
 
+// The numbers for one shift, shown on the end-of-shift report.
+typedef struct {
+    int arrived;             // patients who came in during the shift
+    int admitted;            // patients given a bed during the shift
+    int treated;             // patients discharged during the shift
+    int treatedBySeverity[3];// discharged, by severity (index 0 = severity 1)
+    float totalWait;         // total waiting time of the patients admitted
+    float longestWait;       // longest time any patient waited for a bed
+    float bedBusyTime;       // bed-seconds occupied
+    float doctorBusyTime;    // doctor-seconds spent treating
+} ShiftStats;
+
 typedef struct {
     Patient *waiting;        // head of the waiting queue (most urgent first)
     int waitingCount;
     Bed beds[BED_COUNT];
     Doctor doctors[DOCTOR_COUNT];
-    float clock;             // simulated seconds since start
+    float clock;             // simulated seconds since 07:00 at the start of the day
     float nextArrival;       // clock time of the next random arrival
     int nextId;
-    int admitted;            // patients who have been given a bed
-    int treated;             // patients discharged
-    float totalWait;         // sum of waiting times of admitted patients
+
+    int day;                 // 1 for the first day, 2 for the next, ...
+    ShiftType shift;         // which shift is on
+    bool shiftOver;          // true once the current shift has ended
+    ShiftStats stats;        // the current shift
+    ShiftStats dayStats;     // the finished day shift, kept for the whole-day totals
 } Sim;
 
-void sim_init(Sim *sim);
+// Start a new day: an empty department at 07:00, day shift on.
+void sim_init(Sim *sim, int day);
+
+// Hand over from the day shift to the night shift. Patients who are waiting
+// or in a bed stay where they are; only the shift statistics start again.
+void sim_start_night(Sim *sim);
+
 void sim_update(Sim *sim, float dt);
 void sim_add_patient(Sim *sim, int severity);
 void sim_free(Sim *sim);
 
 // Index of the doctor treating this bed, or -1 if nobody is.
 int sim_doctor_at(const Sim *sim, int bed);
+
+// Convert simulated seconds into minutes of shift time.
+float sim_minutes(float simSeconds);
+
+// The current time of day on the clock, for example 14:32.
+void sim_time_of_day(const Sim *sim, int *hour, int *minute);
 
 #endif

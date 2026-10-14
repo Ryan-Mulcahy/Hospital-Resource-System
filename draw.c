@@ -113,7 +113,7 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     for (int d = 0; d < DOCTOR_COUNT; d++) {
         if (sim->doctors[d].busyWithBed != -1) busyDocs++;
     }
-    float avgWait = (sim->admitted > 0) ? sim->totalWait / (float)sim->admitted : 0.0f;
+    float avgWait = (sim->stats.admitted > 0) ? sim->stats.totalWait / (float)sim->stats.admitted : 0.0f;
 
     Rectangle panel = { x - 20, y - 20, 300, 400 };
     DrawRectangleRounded(panel, 0.06f, 8, C_CARD);
@@ -123,10 +123,13 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     //DrawRectangleLines(x - 20, y - 20, 300, 400, C_LIGHT);
 
     DrawText("STATISTICS", x, y, 20, C_INK);
-    DrawText(TextFormat("Clock:      %.0f s", sim->clock),            x, y + 1 * line + 10, 18, C_INK);
+    int hh, mm;
+    sim_time_of_day(sim, &hh, &mm);
+    DrawText(TextFormat("%s:  %02d:%02d", sim->shift == SHIFT_DAY ? "Day shift" : "Night shift", hh, mm),
+             x, y + 1 * line + 10, 18, C_INK);
     DrawText(TextFormat("Waiting:    %d", sim->waitingCount),         x, y + 2 * line + 10, 18, C_INK);
     DrawText(TextFormat("Beds used:  %d / %d", inBeds, BED_COUNT),    x, y + 3 * line + 10, 18, C_INK);
-    DrawText(TextFormat("Treated:    %d", sim->treated),              x, y + 4 * line + 10, 18, C_INK);
+    DrawText(TextFormat("Treated:    %d", sim->stats.treated),              x, y + 4 * line + 10, 18, C_INK);
     DrawText(TextFormat("Avg wait:   %.1f s", avgWait),               x, y + 5 * line + 10, 18, C_INK);
     DrawText(TextFormat("Doctors:    %d / %d", busyDocs, DOCTOR_COUNT), x, y + 6 * line + 10, 18, C_INK);
     DrawText(TextFormat("Speed:      %.1fx", speed),                  x, y + 7 * line + 10, 18, C_INK);

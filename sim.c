@@ -1,4 +1,4 @@
-// sim.c - arrivals, treatment, admission and doctor rounds.
+// sim.c - arrivals, treatment, admission, doctor rounds and the shift clock.
 // Each update: new patients arrive, treatment counts down in beds that have
 // a doctor, every free bed takes the most urgent waiting patient, then every
 // free doctor goes to the most urgent patient lying in a bed without one.
@@ -38,11 +38,14 @@ void sim_add_patient(Sim *sim, int severity)
 
     queue_insert(&sim->waiting, p);
     sim->waitingCount++;
+    sim->stats.arrived++;
 }
 
-void sim_init(Sim *sim)
+void sim_init(Sim *sim, int day)
 {
     *sim = (Sim){ 0 };
+    sim->day = day;
+    sim->shift = SHIFT_DAY;
     sim->nextId = 1;
     sim->nextArrival = random_arrival_gap();
     for (int d = 0; d < DOCTOR_COUNT; d++) {
@@ -56,6 +59,18 @@ int sim_doctor_at(const Sim *sim, int bed)
         if (sim->doctors[d].busyWithBed == bed) return d;
     }
     return -1;
+}
+
+float sim_minutes(float simSeconds)
+{
+    return simSeconds * (SHIFT_HOURS * 60.0f) / SHIFT_LENGTH;
+}
+
+void sim_time_of_day(const Sim *sim, int *hour, int *minute)
+{
+    int total = DAY_START_HOUR * 60 + (int)sim_minutes(sim->clock);
+    *hour = (total / 60) % 24;
+    *minute = total % 60;
 }
 
 // Most urgent patient in a bed with no doctor (earliest arrival breaks ties),
@@ -87,8 +102,38 @@ void sim_free(Sim *sim)
     }
 }
 
+void sim_start_night(Sim *sim)
+{
+    sim->dayStats = sim->stats;
+    sim->stats = (ShiftStats){ 0 };
+    sim->shift = SHIFT_NIGHT;
+    sim->shiftOver = false;
+}
+
+// Clock time at which the current shift ends: 19:00 or 07:00 next morning.
+static float shift_end(const Sim *sim)
+{
+    return (sim->shift == SHIFT_DAY) ? SHIFT_LENGTH : 2.0f * SHIFT_LENGTH;
+}
+
+// Called once when the clock reaches the end of the shift.
+static void end_shift(Sim *sim)
+{
+    sim->shiftOver = true;
+
+    // Patients still waiting count towards the longest wait as well.
+    for (const Patient *p = sim->waiting; p != NULL; p = p->next) {
+        float wait = sim->clock - p->arrivalTime;
+        if (wait > sim->stats.longestWait) sim->stats.longestWait = wait;
+    }
+}
+
 void sim_update(Sim *sim, float dt)
 {
+    if (sim->shiftOver) return;
+
+    // Never run past the end of the shift.
+    if (sim->clock + dt >= shift_end(sim)) dt = shift_end(sim) - sim->clock;
     sim->clock += dt;
 
     // 1. Arrivals
@@ -108,10 +153,11 @@ void sim_update(Sim *sim, float dt)
 
         p->treatmentLeft -= dt;
         if (p->treatmentLeft <= 0.0f) {
+            sim->stats.treatedBySeverity[p->severity - 1]++;
             free(p);
             sim->beds[i].occupant = NULL;
             sim->doctors[d].busyWithBed = -1;
-            sim->treated++;
+            sim->stats.treated++;
         }
     }
 
@@ -124,8 +170,10 @@ void sim_update(Sim *sim, float dt)
 
         sim->beds[i].occupant = p;
         sim->waitingCount--;
-        sim->admitted++;
-        sim->totalWait += sim->clock - p->arrivalTime;
+        sim->stats.admitted++;
+        float wait = sim->clock - p->arrivalTime;
+        sim->stats.totalWait += wait;
+        if (wait > sim->stats.longestWait) sim->stats.longestWait = wait;
     }
 
     // 4. Doctor rounds: every free doctor goes to the most urgent untreated bed
@@ -137,4 +185,14 @@ void sim_update(Sim *sim, float dt)
 
         sim->doctors[d].busyWithBed = bed;
     }
+
+    // 5. Resource usage for the end-of-shift report
+    for (int i = 0; i < BED_COUNT; i++) {
+        if (sim->beds[i].occupant != NULL) sim->stats.bedBusyTime += dt;
+    }
+    for (int d = 0; d < DOCTOR_COUNT; d++) {
+        if (sim->doctors[d].busyWithBed != -1) sim->stats.doctorBusyTime += dt;
+    }
+
+    if (sim->clock >= shift_end(sim)) end_shift(sim);
 }
