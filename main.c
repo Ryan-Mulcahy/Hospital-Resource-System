@@ -4,7 +4,7 @@
 //
 // Files:
 //   patient.c/.h  patient record and waiting queue
-//   sim.c/.h      simulation state: arrivals, treatment, admission, doctors
+//   sim.c/.h      simulation state: arrivals, treatment, admission, nurses
 //                 and the shift clock
 //   draw.c/.h     everything drawn on screen during a shift
 //   report.c/.h   the end-of-shift report screen

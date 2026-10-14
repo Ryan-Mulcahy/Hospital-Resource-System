@@ -1,7 +1,7 @@
-// sim.c - arrivals, treatment, admission, doctor rounds and the shift clock.
+// sim.c - arrivals, treatment, admission, nurse rounds and the shift clock.
 // Each update: new patients arrive, treatment counts down in beds that have
-// a doctor, every free bed takes the most urgent waiting patient, then every
-// free doctor goes to the most urgent patient lying in a bed without one.
+// a nurse, every free bed takes the most urgent waiting patient, then every
+// free nurse goes to the most urgent patient lying in a bed without one.
 
 #include <stdlib.h>
 #include "raylib.h"          // GetRandomValue
@@ -9,7 +9,7 @@
 
 static float random_arrival_gap(void)
 {
-    // 0.6 to 1.8 seconds. Was 0.3 to 1.5, but with 4 doctors that's more
+    // 0.6 to 1.8 seconds. Was 0.3 to 1.5, but with 4 nurses that's more
     // work than they can keep up with and the queue grows forever.
     return (float)GetRandomValue(5, 18) / 10.0f; // changed 6 to 5 for testing queue growth
 }
@@ -48,15 +48,15 @@ void sim_init(Sim *sim, int day)
     sim->shift = SHIFT_DAY;
     sim->nextId = 1;
     sim->nextArrival = random_arrival_gap();
-    for (int d = 0; d < DOCTOR_COUNT; d++) {
-        sim->doctors[d].busyWithBed = -1;
+    for (int d = 0; d < NURSE_COUNT; d++) {
+        sim->nurses[d].busyWithBed = -1;
     }
 }
 
-int sim_doctor_at(const Sim *sim, int bed)
+int sim_nurse_at(const Sim *sim, int bed)
 {
-    for (int d = 0; d < DOCTOR_COUNT; d++) {
-        if (sim->doctors[d].busyWithBed == bed) return d;
+    for (int d = 0; d < NURSE_COUNT; d++) {
+        if (sim->nurses[d].busyWithBed == bed) return d;
     }
     return -1;
 }
@@ -73,14 +73,14 @@ void sim_time_of_day(const Sim *sim, int *hour, int *minute)
     *minute = total % 60;
 }
 
-// Most urgent patient in a bed with no doctor (earliest arrival breaks ties),
+// Most urgent patient in a bed with no nurse (earliest arrival breaks ties),
 // or -1 if every occupied bed already has one.
-static int bed_needing_doctor(const Sim *sim)
+static int bed_needing_nurse(const Sim *sim)
 {
     int best = -1;
     for (int i = 0; i < BED_COUNT; i++) {
         const Patient *p = sim->beds[i].occupant;
-        if (p == NULL || sim_doctor_at(sim, i) != -1) continue;
+        if (p == NULL || sim_nurse_at(sim, i) != -1) continue;
 
         if (best == -1) { best = i; continue; }
         const Patient *b = sim->beds[best].occupant;
@@ -142,21 +142,21 @@ void sim_update(Sim *sim, float dt)
         sim->nextArrival += random_arrival_gap();
     }
 
-    // 2. Treatment: only beds with a doctor tick down.
-    //    When treatment finishes, the bed and the doctor are both freed.
+    // 2. Treatment: only beds with a nurse tick down.
+    //    When treatment finishes, the bed and the nurse are both freed.
     for (int i = 0; i < BED_COUNT; i++) {
         Patient *p = sim->beds[i].occupant;
         if (p == NULL) continue;
 
-        int d = sim_doctor_at(sim, i);
-        if (d == -1) continue;          // in a bed, but waiting for a doctor
+        int d = sim_nurse_at(sim, i);
+        if (d == -1) continue;          // in a bed, but waiting for a nurse
 
         p->treatmentLeft -= dt;
         if (p->treatmentLeft <= 0.0f) {
             sim->stats.treatedBySeverity[p->severity - 1]++;
             free(p);
             sim->beds[i].occupant = NULL;
-            sim->doctors[d].busyWithBed = -1;
+            sim->nurses[d].busyWithBed = -1;
             sim->stats.treated++;
         }
     }
@@ -176,22 +176,22 @@ void sim_update(Sim *sim, float dt)
         if (wait > sim->stats.longestWait) sim->stats.longestWait = wait;
     }
 
-    // 4. Doctor rounds: every free doctor goes to the most urgent untreated bed
-    for (int d = 0; d < DOCTOR_COUNT; d++) {
-        if (sim->doctors[d].busyWithBed != -1) continue;
+    // 4. Nurse rounds: every free nurse goes to the most urgent untreated bed
+    for (int d = 0; d < NURSE_COUNT; d++) {
+        if (sim->nurses[d].busyWithBed != -1) continue;
 
-        int bed = bed_needing_doctor(sim);
+        int bed = bed_needing_nurse(sim);
         if (bed == -1) break;
 
-        sim->doctors[d].busyWithBed = bed;
+        sim->nurses[d].busyWithBed = bed;
     }
 
     // 5. Resource usage for the end-of-shift report
     for (int i = 0; i < BED_COUNT; i++) {
         if (sim->beds[i].occupant != NULL) sim->stats.bedBusyTime += dt;
     }
-    for (int d = 0; d < DOCTOR_COUNT; d++) {
-        if (sim->doctors[d].busyWithBed != -1) sim->stats.doctorBusyTime += dt;
+    for (int d = 0; d < NURSE_COUNT; d++) {
+        if (sim->nurses[d].busyWithBed != -1) sim->stats.nurseBusyTime += dt;
     }
 
     if (sim->clock >= shift_end(sim)) end_shift(sim);

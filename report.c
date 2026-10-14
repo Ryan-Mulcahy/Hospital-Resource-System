@@ -1,5 +1,5 @@
 // report.c - end-of-shift report: what happened during the shift, and how
-// busy the beds and doctors were. After the night shift it also shows
+// busy the beds and nurses were. After the night shift it also shows
 // totals for the whole day.
 
 #include <stddef.h>
@@ -96,11 +96,11 @@ void draw_shift_report(const Sim *sim)
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 40;
 
     float bedUse = 100.0f * s->bedBusyTime    / (BED_COUNT    * SHIFT_LENGTH);
-    float docUse = 100.0f * s->doctorBusyTime / (DOCTOR_COUNT * SHIFT_LENGTH);
+    float docUse = 100.0f * s->nurseBusyTime / (NURSE_COUNT * SHIFT_LENGTH);
     heading("RESOURCES", RIGHT_LABEL, y);                                                 y += 26;
     row(TextFormat("Beds in use (%d)", BED_COUNT), TextFormat("%.0f%%", bedUse),
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
-    row(TextFormat("Doctors busy (%d)", DOCTOR_COUNT), TextFormat("%.0f%%", docUse),
+    row(TextFormat("Nurses busy (%d)", NURSE_COUNT), TextFormat("%.0f%%", docUse),
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 40;
 
     // After the night shift: totals for the whole day
