@@ -11,7 +11,7 @@ static float random_arrival_gap(void)
 {
     // 0.6 to 1.8 seconds. Was 0.3 to 1.5, but with 4 nurses that's more
     // work than they can keep up with and the queue grows forever.
-    return (float)GetRandomValue(6, 18) / 10.0f; // changed 6 to 5 for testing queue growth
+    return (float)GetRandomValue(6, 20) / 10.0f; // changed 6 to 5 for testing queue growth
 }
 
 static int random_severity(void)
@@ -75,11 +75,10 @@ int sim_doctor_at(const Sim *sim, int bed)
 }
 
 // The nurse's decision at the end of an assessment.
-static bool needs_doctor(const Sim *sim, const Patient *p)
+static bool needs_doctor(const Patient *p)
 {
     if (p->severity == 1) return true;                          // emergency: always
-    if (p->severity == 2)                                       // urgent: if they got worse waiting
-        return (sim->clock - p->arrivalTime) >= URGENT_WAIT_LIMIT;
+    if (p->severity == 2) return GetRandomValue(1, 5) == 1;     // urgent: 1 in 5
     return GetRandomValue(1, 10) == 1;                          // routine: 1 in 10
 }
 
@@ -197,7 +196,7 @@ void sim_update(Sim *sim, float dt)
         if (p->assessLeft > 0.0f) {
             if (n == -1) continue;          // in a bed, waiting for a nurse
             p->assessLeft -= dt;
-            if (p->assessLeft <= 0.0f && needs_doctor(sim, p)) {
+            if (p->assessLeft <= 0.0f && needs_doctor(p)) {
                 p->needsDoctor = true;      // hand over to a doctor
                 sim->nurses[n].busyWithBed = -1;
                 sim->stats.sawDoctor++;

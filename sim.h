@@ -12,7 +12,6 @@
 #define DOCTOR_COUNT 2
 // A nurse assesses every patient first, then decides if a doctor is needed.
 #define ASSESS_TIME       1.0f   // seconds a nurse takes to assess a patient
-#define URGENT_WAIT_LIMIT 15.0f  // an urgent patient who has waited this long needs a doctor (1 hour)
 
 
 // A day is two 12-hour shifts: the day shift from 07:00 to 19:00, then the
