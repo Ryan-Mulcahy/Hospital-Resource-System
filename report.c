@@ -1,5 +1,5 @@
 // report.c - end-of-shift report: what happened during the shift, and how
-// busy the beds and doctors were. After the night shift it also shows
+// busy the beds and nurses were. After the night shift it also shows
 // totals for the whole day.
 
 #include <stddef.h>
@@ -85,8 +85,8 @@ void draw_shift_report(const Sim *sim)
     severity_row("routine",   s->treatedBySeverity[2], C_ROUTINE,   y);                   y += ROW;
     row(night ? "Waiting at end of day" : "Waiting at handover",
         TextFormat("%d", sim->waitingCount), LEFT_LABEL, LEFT_VALUE, y);                  y += ROW;
-    row("Still in a bed", TextFormat("%d", inBeds), LEFT_LABEL, LEFT_VALUE, y);
-
+    row("Still in a bed", TextFormat("%d", inBeds), LEFT_LABEL, LEFT_VALUE, y);           y += ROW;
+    row("Sent to a doctor", TextFormat("%d", s->sawDoctor), LEFT_LABEL, LEFT_VALUE, y);
     // Right column: waiting times and resource use
     y = 135;
     heading("WAITING FOR A BED", RIGHT_LABEL, y);                                         y += 26;
@@ -96,14 +96,17 @@ void draw_shift_report(const Sim *sim)
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 40;
 
     float bedUse = 100.0f * s->bedBusyTime    / (BED_COUNT    * SHIFT_LENGTH);
-    float docUse = 100.0f * s->doctorBusyTime / (DOCTOR_COUNT * SHIFT_LENGTH);
+    float docUse = 100.0f * s->nurseBusyTime / (NURSE_COUNT * SHIFT_LENGTH);
     heading("RESOURCES", RIGHT_LABEL, y);                                                 y += 26;
     row(TextFormat("Beds in use (%d)", BED_COUNT), TextFormat("%.0f%%", bedUse),
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
-    row(TextFormat("Doctors busy (%d)", DOCTOR_COUNT), TextFormat("%.0f%%", docUse),
-        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 40;
-
-    // After the night shift: totals for the whole day
+    row(TextFormat("Nurses busy (%d)", NURSE_COUNT), TextFormat("%.0f%%", docUse),
+        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
+    float drUse = 100.0f * s->doctorBusyTime / (DOCTOR_COUNT * SHIFT_LENGTH);
+    row(TextFormat("Doctors busy (%d)", DOCTOR_COUNT), TextFormat("%.0f%%", drUse),
+        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 40;   
+    
+        // After the night shift: totals for the whole day
     if (night) {
         const ShiftStats *d = &sim->dayStats;
         heading("WHOLE DAY", RIGHT_LABEL, y);                                             y += 26;

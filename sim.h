@@ -8,7 +8,11 @@
 #include "patient.h"
 
 #define BED_COUNT    6
-#define DOCTOR_COUNT 4
+#define NURSE_COUNT 4
+#define DOCTOR_COUNT 2
+// A nurse assesses every patient first, then decides if a doctor is needed.
+#define ASSESS_TIME       1.0f   // seconds a nurse takes to assess a patient
+
 
 // A day is two 12-hour shifts: the day shift from 07:00 to 19:00, then the
 // night shift from 19:00 to 07:00. At 1x speed each shift lasts SHIFT_LENGTH
@@ -25,6 +29,11 @@ typedef struct {
 
 typedef struct {
     int busyWithBed;         // index of the bed they're treating, or -1 if free
+} Nurse;
+
+
+typedef struct {
+    int busyWithBed;         // index of the bed they're treating, or -1 if free
 } Doctor;
 
 // The numbers for one shift, shown on the end-of-shift report.
@@ -36,13 +45,17 @@ typedef struct {
     float totalWait;         // total waiting time of the patients admitted
     float longestWait;       // longest time any patient waited for a bed
     float bedBusyTime;       // bed-seconds occupied
+    float nurseBusyTime;    // nurse-seconds spent treating
     float doctorBusyTime;    // doctor-seconds spent treating
+    int sawDoctor;           // patients a nurse sent to a doctor
+
 } ShiftStats;
 
 typedef struct {
     Patient *waiting;        // head of the waiting queue (most urgent first)
     int waitingCount;
     Bed beds[BED_COUNT];
+    Nurse nurses[NURSE_COUNT];
     Doctor doctors[DOCTOR_COUNT];
     float clock;             // simulated seconds since 07:00 at the start of the day
     float nextArrival;       // clock time of the next random arrival
@@ -65,6 +78,9 @@ void sim_start_night(Sim *sim);
 void sim_update(Sim *sim, float dt);
 void sim_add_patient(Sim *sim, int severity);
 void sim_free(Sim *sim);
+
+// Index of the nurse treating this bed, or -1 if nobody is.
+int sim_nurse_at(const Sim *sim, int bed);
 
 // Index of the doctor treating this bed, or -1 if nobody is.
 int sim_doctor_at(const Sim *sim, int bed);

@@ -4,13 +4,15 @@
 
 #ifndef PATIENT_H
 #define PATIENT_H
-
+#include <stdbool.h>
 typedef struct Patient {
     int id;
     int severity;            // 1 = emergency, 2 = urgent, 3 = routine
     float arrivalTime;       // simulation clock when they arrived
     float treatmentTotal;    // seconds of treatment needed
     float treatmentLeft;     // seconds of treatment remaining
+    float assessLeft;        // seconds of nurse assessment remaining
+    bool needsDoctor;        // the nurse's decision once the assessment is done
     struct Patient *next;    // next patient in the waiting queue
 } Patient;
 
