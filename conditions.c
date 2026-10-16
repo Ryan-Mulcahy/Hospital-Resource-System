@@ -1,6 +1,7 @@
 // conditions.c - loads conditions.csv and picks conditions for new patients.
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include "raylib.h"          // GetRandomValue, same random source as sim.c
@@ -16,6 +17,13 @@ static const Condition fallback[3] = {
     { 2, "Unspecified urgent",    "R69" },
     { 3, "Unspecified routine",   "R69" },
 };
+
+// Skip spaces and tabs at the start of a string.
+static const char *skip_spaces(const char *s)
+{
+    while (*s == ' ' || *s == '\t') s++;
+    return s;
+}
 
 // Remove spaces, tabs and line endings (\r\n from Windows) from the end.
 static void trim_end(char *s)
@@ -36,14 +44,29 @@ int conditions_load(const char *filename)
 
     char line[256];
     while (count < MAX_CONDITIONS && fgets(line, sizeof line, f) != NULL) {
-        Condition c;
-        // " %d" skips leading spaces; %47[^,] reads the name up to the next comma.
-        // The header row fails the %d and is skipped.
-        if (sscanf(line, " %d , %47[^,] , %11s", &c.severity, c.name, c.icd10) != 3) continue;
-        if (c.severity < 1 || c.severity > 3) continue;
+        // Split the line at its first two commas: severity , name , code
+        char *comma1 = strchr(line, ',');
+        char *comma2 = comma1 ? strchr(comma1 + 1, ',') : NULL;
+        if (comma2 == NULL) continue;              // not three columns
+        *comma1 = '\0';
+        *comma2 = '\0';
+        char *comma3 = strchr(comma2 + 1, ',');    // ignore any extra columns
+        if (comma3 != NULL) *comma3 = '\0';
 
+        // strtol skips leading spaces; the header row ("severity") has no number
+        char *end;
+        long severity = strtol(line, &end, 10);
+        if (end == line || severity < 1 || severity > 3) continue;
+
+        Condition c;
+        c.severity = (int)severity;
+        // snprintf copies at most the buffer size, so an over-long name is
+        // shortened rather than overflowing or making the line be skipped
+        snprintf(c.name,  sizeof c.name,  "%s", skip_spaces(comma1 + 1));
+        snprintf(c.icd10, sizeof c.icd10, "%s", skip_spaces(comma2 + 1));
         trim_end(c.name);
         trim_end(c.icd10);
+        if (c.name[0] == '\0') continue;
         table[count++] = c;
     }
 
