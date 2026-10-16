@@ -13,6 +13,7 @@ typedef struct Patient {
     float treatmentTotal;    // seconds of treatment needed
     float treatmentLeft;     // seconds of treatment remaining
     float assessLeft;        // seconds of nurse assessment remaining
+    float waitedFor;         // seconds from arriving to getting a bed
     bool needsDoctor;        // the nurse's decision once the assessment is done
     const Condition *condition; // presenting condition, chosen to match severity
     struct Patient *next;    // next patient in the waiting queue

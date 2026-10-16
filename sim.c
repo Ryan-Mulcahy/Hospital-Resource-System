@@ -3,6 +3,7 @@
 // a nurse, every free bed takes the most urgent waiting patient, then every
 // free nurse goes to the most urgent patient lying in a bed without one.
 
+#include <stdio.h>           // snprintf, printf
 #include <stdlib.h>
 #include "raylib.h"          // GetRandomValue
 #include "sim.h"
@@ -36,6 +37,7 @@ void sim_add_patient(Sim *sim, int severity)
     p->treatmentTotal = base + (float)GetRandomValue(-10, 10) / 10.0f;
     p->treatmentLeft = p->treatmentTotal;
     p->assessLeft = ASSESS_TIME;
+    p->waitedFor = 0.0f;
     p->needsDoctor = false;
     p->condition = conditions_random(severity);
     p->next = NULL;
@@ -56,7 +58,7 @@ void sim_init(Sim *sim, int day)
         sim->nurses[d].busyWithBed = -1;
     }
     for (int d = 0; d < DOCTOR_COUNT; d++) {
-    sim->doctors[d].busyWithBed = -1;
+        sim->doctors[d].busyWithBed = -1;
     }
 }
 
@@ -142,12 +144,52 @@ void sim_free(Sim *sim)
         free(sim->beds[i].occupant);
         sim->beds[i].occupant = NULL;
     }
+
+    free(sim->treatedLog);
+    sim->treatedLog = NULL;
+    sim->treatedLogCount = 0;
+    sim->treatedLogCapacity = 0;
+}
+
+// Add a discharged patient to the treatment log. When the array is full it
+// doubles in size with realloc (starting at 64 records). realloc's result goes
+// into a temporary first: if it fails, the old array is still valid and still
+// ours to free, so nothing leaks; that one record is just not logged.
+static void log_treated(Sim *sim, const Patient *p, const char *treatedBy)
+{
+    if (sim->treatedLogCount == sim->treatedLogCapacity) {
+        int newCapacity = (sim->treatedLogCapacity == 0) ? 64 : sim->treatedLogCapacity * 2;
+        TreatedRecord *bigger = realloc(sim->treatedLog, (size_t)newCapacity * sizeof *bigger);
+        if (bigger == NULL) return;
+        sim->treatedLog = bigger;
+        sim->treatedLogCapacity = newCapacity;
+    }
+
+    TreatedRecord *r = &sim->treatedLog[sim->treatedLogCount++];
+    r->id = p->id;
+    r->severity = p->severity;
+    r->condition = p->condition;
+    snprintf(r->treatedBy, sizeof r->treatedBy, "%s", treatedBy);
+    r->sawDoctor = p->needsDoctor;
+    r->arrivalTime = p->arrivalTime;
+    r->wait = p->waitedFor;
+    r->dischargeTime = sim->clock;
+}
+
+// Who treated the patient, as text: "Dr <name>" / "Nurse <name>", or
+// "Dr 1" / "Nurse 3" while the staff have no names yet.
+static void staff_label(char *out, size_t size, bool doctor, const char *name, int index)
+{
+    const char *role = doctor ? "Dr" : "Nurse";
+    if (name != NULL) snprintf(out, size, "%s %s", role, name);
+    else              snprintf(out, size, "%s %d", role, index + 1);
 }
 
 void sim_start_night(Sim *sim)
 {
     sim->dayStats = sim->stats;
     sim->stats = (ShiftStats){ 0 };
+    sim->treatedLogCount = 0;        // start a new log; keep the memory to reuse
     sim->shift = SHIFT_NIGHT;
     sim->shiftOver = false;
 }
@@ -162,6 +204,8 @@ static float shift_end(const Sim *sim)
 static void end_shift(Sim *sim)
 {
     sim->shiftOver = true;
+    printf("Shift log: %d patients recorded (space for %d)\n",
+           sim->treatedLogCount, sim->treatedLogCapacity);
 
     // Patients still waiting count towards the longest wait as well.
     for (const Patient *p = sim->waiting; p != NULL; p = p->next) {
@@ -207,10 +251,17 @@ void sim_update(Sim *sim, float dt)
         }
 
         if (p->needsDoctor && d == -1) continue;   // waiting for a doctor
+        if (!p->needsDoctor && n == -1) continue;  // guard: nurse-treated needs a nurse
 
         p->treatmentLeft -= dt;
         if (p->treatmentLeft <= 0.0f) {
             sim->stats.treatedBySeverity[p->severity - 1]++;
+
+            char who[TREATED_BY_LEN];
+            if (p->needsDoctor) staff_label(who, sizeof who, true,  sim->doctors[d].name, d);
+            else                staff_label(who, sizeof who, false, sim->nurses[n].name,  n);
+            log_treated(sim, p, who);
+
             if (p->needsDoctor) sim->doctors[d].busyWithBed = -1;
             else                sim->nurses[n].busyWithBed = -1;
             free(p);
@@ -230,6 +281,7 @@ void sim_update(Sim *sim, float dt)
         sim->waitingCount--;
         sim->stats.admitted++;
         float wait = sim->clock - p->arrivalTime;
+        p->waitedFor = wait;
         sim->stats.totalWait += wait;
         if (wait > sim->stats.longestWait) sim->stats.longestWait = wait;
     }
