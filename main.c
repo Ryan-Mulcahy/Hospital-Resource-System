@@ -55,6 +55,7 @@ int main(void)
                     sim_init(&sim, next);
                 }
                 paused = false;
+                showRoster = true;           // show who's on before the shift starts
             }
         } else {
             // Input

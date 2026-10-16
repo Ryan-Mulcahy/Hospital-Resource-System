@@ -122,7 +122,7 @@ void draw_shift_report(const Sim *sim)
     Rectangle b = continue_button();
     bool hover = CheckCollisionPointRec(GetMousePosition(), b);
     DrawRectangleRounded(b, 0.4f, 8, hover ? C_INK : C_BRAND);
-    const char *label = night ? TextFormat("Start day %d", sim->day + 1) : "Start night shift";
+    const char *label = "Continue";
     DrawText(label, (int)(b.x + b.width / 2 - MeasureText(label, 20) / 2),
              (int)(b.y + 15), 20, WHITE);
     centered("or press N", 530, 14, C_MUTED);
