@@ -5,6 +5,7 @@
 #ifndef PATIENT_H
 #define PATIENT_H
 #include <stdbool.h>
+#include "conditions.h"
 typedef struct Patient {
     int id;
     int severity;            // 1 = emergency, 2 = urgent, 3 = routine
@@ -13,6 +14,7 @@ typedef struct Patient {
     float treatmentLeft;     // seconds of treatment remaining
     float assessLeft;        // seconds of nurse assessment remaining
     bool needsDoctor;        // the nurse's decision once the assessment is done
+    const Condition *condition; // presenting condition, chosen to match severity
     struct Patient *next;    // next patient in the waiting queue
 } Patient;
 

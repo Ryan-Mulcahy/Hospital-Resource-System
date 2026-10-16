@@ -1,0 +1,26 @@
+// conditions.h - presenting conditions, loaded from conditions.csv at startup.
+// Each patient gets a random condition that matches their severity.
+
+#ifndef CONDITIONS_H
+#define CONDITIONS_H
+
+#define MAX_CONDITIONS     64
+#define CONDITION_NAME_LEN 48
+#define ICD10_LEN          12
+
+typedef struct {
+    int severity;                     // 1 = emergency, 2 = urgent, 3 = routine
+    char name[CONDITION_NAME_LEN];    // e.g. "Chest pain"
+    char icd10[ICD10_LEN];            // e.g. "R07.9"
+} Condition;
+
+// Read conditions from a CSV file with the columns severity,condition,icd10.
+// The header row and any line that doesn't parse are skipped.
+// Returns how many conditions were loaded (0 if the file couldn't be opened).
+int conditions_load(const char *filename);
+
+// A random condition with this severity. Never returns NULL: if no condition
+// of that severity was loaded, a built-in "Unspecified" entry is returned.
+const Condition *conditions_random(int severity);
+
+#endif

@@ -21,6 +21,7 @@
 #include "sim.h"
 #include "draw.h"
 #include "report.h"
+#include "conditions.h"
 
 int main(void)
 {
@@ -31,6 +32,8 @@ int main(void)
     
     SetWindowIcon(logo); // works cause image background transparent
     UnloadImage(logo);   // the window keeps its own copy of the icon
+
+    conditions_load("conditions.csv");   // before any patient arrives
 
     Sim sim;
     sim_init(&sim, 1);   // day 1

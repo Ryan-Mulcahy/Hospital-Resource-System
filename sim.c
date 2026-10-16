@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include "raylib.h"          // GetRandomValue
 #include "sim.h"
+#include "conditions.h"
 
 static float random_arrival_gap(void)
 {
@@ -36,6 +37,7 @@ void sim_add_patient(Sim *sim, int severity)
     p->treatmentLeft = p->treatmentTotal;
     p->assessLeft = ASSESS_TIME;
     p->needsDoctor = false;
+    p->condition = conditions_random(severity);
     p->next = NULL;
 
     queue_insert(&sim->waiting, p);
