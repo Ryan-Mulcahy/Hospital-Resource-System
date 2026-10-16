@@ -4,6 +4,7 @@
 #ifndef ROSTER_H
 #define ROSTER_H
 
+#include <stdbool.h>
 #include "sim.h"
 
 // Shift number: 0 = day 1, 1 = night 1, 2 = day 2, 3 = night 2, ...
@@ -16,4 +17,11 @@ const char *roster_doctor(int shiftNumber, int k);
 // Give every nurse and doctor in the sim their name for the current shift.
 void roster_assign(Sim *sim);
 
+
+// The roster screen, shown before a shift starts: who is on this shift and
+// who is on the next one. Call between BeginDrawing() and EndDrawing().
+void draw_roster_screen(int day, ShiftType shift);
+
+// True on the frame the button to start the shift is clicked.
+bool roster_start_clicked(void);
 #endif

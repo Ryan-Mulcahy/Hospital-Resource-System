@@ -21,6 +21,7 @@
 #include "sim.h"
 #include "draw.h"
 #include "report.h"
+#include "roster.h"
 
 int main(void)
 {
@@ -36,10 +37,14 @@ int main(void)
     sim_init(&sim, 1);   // day 1
 
     bool paused = false;
+    bool showRoster = true;  // roster screen before the shift starts
     float speed = 1.0f;
 
     while (!WindowShouldClose()) {
-        if (sim.shiftOver) {
+        if (showRoster) {
+            // Roster screen: wait for the shift to be started
+            if (IsKeyPressed(KEY_N) || roster_start_clicked()) showRoster = false;
+        } else if (sim.shiftOver) {
             // Report screen: wait for the next shift to be started
             if (IsKeyPressed(KEY_N) || report_new_shift_clicked()) {
                 if (sim.shift == SHIFT_DAY) {
@@ -69,7 +74,8 @@ int main(void)
 
         // Draw
         BeginDrawing();
-        if (sim.shiftOver) draw_shift_report(&sim);
+        if (showRoster)         draw_roster_screen(sim.day, sim.shift);
+        else if (sim.shiftOver) draw_shift_report(&sim);
         else               draw_frame(&sim, speed, paused);
         EndDrawing();
     }
