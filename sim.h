@@ -103,6 +103,11 @@ void sim_add_patient(Sim *sim, int severity);
 // Free every patient and the treatment log.
 void sim_free(Sim *sim);
 
+// Write this shift's treatment log to a CSV file (opens in Excel).
+// Returns false if the file couldn't be written. Called automatically at the
+// end of each shift, as log_day<N>_day.csv or log_day<N>_night.csv.
+bool sim_save_log_csv(const Sim *sim, const char *filename);
+
 // Index of the nurse treating this bed, or -1 if nobody is.
 int sim_nurse_at(const Sim *sim, int bed);
 

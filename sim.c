@@ -200,12 +200,62 @@ static float shift_end(const Sim *sim)
     return (sim->shift == SHIFT_DAY) ? SHIFT_LENGTH : 2.0f * SHIFT_LENGTH;
 }
 
+// A clock value as a time of day, e.g. "18:52". out must hold at least 6 chars.
+static void clock_to_hhmm(float clock, char *out, size_t size)
+{
+    int total = DAY_START_HOUR * 60 + (int)sim_minutes(clock);
+    snprintf(out, size, "%02d:%02d", (total / 60) % 24, total % 60);
+}
+
+static const char *severity_name(int severity)
+{
+    if (severity == 1) return "Emergency";
+    if (severity == 2) return "Urgent";
+    return "Routine";
+}
+
+bool sim_save_log_csv(const Sim *sim, const char *filename)
+{
+    FILE *f = fopen(filename, "w");
+    if (f == NULL) {
+        printf("Treatment log: could not write %s\n", filename);
+        return false;
+    }
+
+    fprintf(f, "patient,severity,severity_name,condition,icd10,arrived,"
+               "waited_min,discharged,minutes_in_ed,treated_by,saw_doctor\n");
+
+    for (int i = 0; i < sim->treatedLogCount; i++) {
+        const TreatedRecord *r = &sim->treatedLog[i];
+        char arrived[8], discharged[8];
+        clock_to_hhmm(r->arrivalTime,   arrived,    sizeof arrived);
+        clock_to_hhmm(r->dischargeTime, discharged, sizeof discharged);
+
+        // Text fields are quoted so a comma in a name can't break the columns.
+        fprintf(f, "%d,%d,%s,\"%s\",%s,%s,%.0f,%s,%.0f,\"%s\",%s\n",
+                r->id, r->severity, severity_name(r->severity),
+                r->condition->name, r->condition->icd10,
+                arrived, sim_minutes(r->wait), discharged,
+                sim_minutes(r->dischargeTime - r->arrivalTime),
+                r->treatedBy, r->sawDoctor ? "yes" : "no");
+    }
+
+    bool ok = !ferror(f);          // did any write fail (e.g. disk full)?
+    if (fclose(f) != 0) ok = false;
+    if (ok) printf("Treatment log: saved %d patients to %s\n", sim->treatedLogCount, filename);
+    else    printf("Treatment log: error while writing %s\n", filename);
+    return ok;
+}
+
 // Called once when the clock reaches the end of the shift.
 static void end_shift(Sim *sim)
 {
     sim->shiftOver = true;
-    printf("Shift log: %d patients recorded (space for %d)\n",
-           sim->treatedLogCount, sim->treatedLogCapacity);
+
+    char filename[64];
+    snprintf(filename, sizeof filename, "log_day%d_%s.csv",
+             sim->day, sim->shift == SHIFT_DAY ? "day" : "night");
+    sim_save_log_csv(sim, filename);
 
     // Patients still waiting count towards the longest wait as well.
     for (const Patient *p = sim->waiting; p != NULL; p = p->next) {
