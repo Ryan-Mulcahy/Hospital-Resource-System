@@ -1,4 +1,3 @@
-
 // sim.h - the simulation state and the functions that advance it.
 // Nothing in here draws anything; draw.c reads this state to display it.
  
@@ -48,6 +47,20 @@ typedef struct {
     int busyWithBed;         // index of the bed they're treating, or -1 if free
 } Doctor;
  
+// One line in the treatment log: a patient who was discharged this shift.
+#define TREATED_BY_LEN 40
+ 
+typedef struct {
+    int id;
+    int severity;                    // 1 = emergency, 2 = urgent, 3 = routine
+    const Condition *condition;      // points into the conditions table (lives all run)
+    char treatedBy[TREATED_BY_LEN];  // e.g. "Nurse Aoife Byrne", or "Nurse 2" before names
+    bool sawDoctor;                  // true if a nurse sent them to a doctor
+    float arrivalTime;               // clock time they arrived
+    float wait;                      // seconds waiting for a bed
+    float dischargeTime;             // clock time they left
+} TreatedRecord;
+ 
 // The numbers for one shift, shown on the end-of-shift report.
 typedef struct {
     int arrived;             // patients who came in during the shift
@@ -78,18 +91,32 @@ typedef struct {
     bool shiftOver;          // true once the current shift has ended
     ShiftStats stats;        // the current shift
     ShiftStats dayStats;     // the finished day shift, kept for the whole-day totals
+ 
+    // Treatment log for the current shift. The array grows with realloc
+    // (doubling) as patients are discharged, and is freed by sim_free.
+    TreatedRecord *treatedLog;
+    int treatedLogCount;     // records in use
+    int treatedLogCapacity;  // records allocated
 } Sim;
  
 // Start a new day: an empty department at 07:00, day shift on.
+// Only call on a new Sim or after sim_free, or the treatment log leaks.
 void sim_init(Sim *sim, int day);
  
 // Hand over from the day shift to the night shift. Patients who are waiting
-// or in a bed stay where they are; only the shift statistics start again.
+// or in a bed stay where they are; the shift statistics and the treatment
+// log start again (the log keeps its memory to reuse).
 void sim_start_night(Sim *sim);
  
 void sim_update(Sim *sim, float dt);
 void sim_add_patient(Sim *sim, int severity);
+// Free every patient and the treatment log.
 void sim_free(Sim *sim);
+ 
+// Write this shift's treatment log to a CSV file (opens in Excel).
+// Returns false if the file couldn't be written. Called automatically at the
+// end of each shift, as log_day<N>_day.csv or log_day<N>_night.csv.
+bool sim_save_log_csv(const Sim *sim, const char *filename);
  
 // Index of the nurse treating this bed, or -1 if nobody is.
 int sim_nurse_at(const Sim *sim, int bed);

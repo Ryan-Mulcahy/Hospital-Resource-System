@@ -1,0 +1,6 @@
+   severity,condition,icd10
+   1,Cardiac arrest,I46.9
+   1,Sepsis,A41.9
+   2,Chest pain,R07.9
+   2,Asthma attack,J45.901
+   3,Ankle sprain,S93.409A

@@ -13,4 +13,17 @@ void draw_shift_report(const Sim *sim);
 // True on the frame the button to continue is clicked.
 bool report_new_shift_clicked(void);
 
+// True on the frame the "Patients treated" button is clicked.
+bool report_view_log_clicked(void);
+
+// The treatment log page: every patient discharged this shift, one per row.
+// scroll is the index of the first row shown.
+void draw_patient_log(const Sim *sim, int scroll);
+
+// The largest useful scroll value for this shift's log (0 if it all fits).
+int report_log_max_scroll(const Sim *sim);
+
+// True on the frame the "Back to report" button on the log page is clicked.
+bool report_log_back_clicked(void);
+
 #endif
