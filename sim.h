@@ -28,11 +28,12 @@ typedef struct {
 } Bed;
 
 typedef struct {
+    const char *name;        // staff member's name, set by the roster (NULL until then)
     int busyWithBed;         // index of the bed they're treating, or -1 if free
 } Nurse;
 
-
 typedef struct {
+    const char *name;        // staff member's name, set by the roster (NULL until then)
     int busyWithBed;         // index of the bed they're treating, or -1 if free
 } Doctor;
 
