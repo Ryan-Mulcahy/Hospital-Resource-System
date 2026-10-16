@@ -71,9 +71,9 @@ static void draw_beds(const Sim *sim)
         // Who is with them. Red text means the progress bar is stalled.
         int n = sim_nurse_at(sim, i);
         int d = sim_doctor_at(sim, i);
-        if (d != -1)             DrawText(TextFormat("Dr %d", d + 1),    x + 8, y0 + 92, 12, C_INK);
+        if (d != -1)             DrawText(TextFormat("Dr %s", sim->doctors[d].name), x + 8, y0 + 92, 12, C_INK);
         else if (p->needsDoctor) DrawText("needs Dr",                    x + 8, y0 + 92, 12, MAROON);
-        else if (n != -1)        DrawText(TextFormat("Nurse %d", n + 1), x + 8, y0 + 92, 12, C_BRAND);
+        else if (n != -1)        DrawText(sim->nurses[n].name,           x + 8, y0 + 92, 12, C_BRAND);
         else                     DrawText("no nurse",                    x + 8, y0 + 92, 12, MAROON);
 
         // Treatment progress bar
@@ -89,7 +89,7 @@ static void draw_nurses(const Sim *sim)
 
     DrawText("STAFF", x0, y0 - 28, 20, C_INK);
 
-    for (int d = 0; d < NURSE_COUNT; d++) {
+    for (int d = 0; d < NURSES_ON(sim->shift); d++) {
         int x = x0 + d * (w + gap);
         int bed = sim->nurses[d].busyWithBed;
         bool busy = (bed != -1);
@@ -99,21 +99,21 @@ static void draw_nurses(const Sim *sim)
         DrawRectangleRoundedLines(card, 0.4f, 8, C_EDGE);
         //DrawRectangle(x, y0, w, h, busy ? C_BRAND : C_CARD);
         //DrawRectangleLines(x, y0, w, h, C_EDGE);
-        DrawText(TextFormat("Nurse %d", d + 1), x + 8, y0 + 6, 14, busy ? WHITE : C_INK);
+        DrawText(sim->nurses[d].name, x + 8, y0 + 6, 14, busy ? WHITE : C_INK);
         DrawText(busy ? TextFormat("Bed %d", bed + 1) : "free",
                  x + 8, y0 + 22, 12, busy ? WHITE : C_LIGHT);
     }
     
     // Doctors go in the same row, after the nurses, in a darker colour
-    for (int d = 0; d < DOCTOR_COUNT; d++) {
-        int x = x0 + (NURSE_COUNT + d) * (w + gap);
+    for (int d = 0; d < DOCTORS_ON(sim->shift); d++) {
+        int x = x0 + (NURSES_ON(sim->shift) + d) * (w + gap);
         int bed = sim->doctors[d].busyWithBed;
         bool busy = (bed != -1);
 
         Rectangle card = { x, y0, w, h };
         DrawRectangleRounded(card, 0.4f, 8, busy ? C_INK : C_CARD);
         DrawRectangleRoundedLines(card, 0.4f, 8, C_EDGE);
-        DrawText(TextFormat("Dr %d", d + 1), x + 8, y0 + 6, 14, busy ? WHITE : C_INK);
+        DrawText(TextFormat("Dr %s", sim->doctors[d].name), x + 8, y0 + 6, 14, busy ? WHITE : C_INK);
         DrawText(busy ? TextFormat("Bed %d", bed + 1) : "free",
                  x + 8, y0 + 22, 12, busy ? WHITE : C_LIGHT);
     }
@@ -154,9 +154,9 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     DrawText(TextFormat("Beds used:  %d / %d", inBeds, BED_COUNT),    x, y + 3 * line + 10, 18, C_INK);
     DrawText(TextFormat("Treated:    %d", sim->stats.treated),              x, y + 4 * line + 10, 18, C_INK);
     DrawText(TextFormat("Avg wait:   %.1f s", avgWait),               x, y + 5 * line + 10, 18, C_INK);
-    DrawText(TextFormat("Nurses:    %d / %d", busyNurses, NURSE_COUNT), x, y + 6 * line + 10, 18, C_INK);
+    DrawText(TextFormat("Nurses:    %d / %d", busyNurses, NURSES_ON(sim->shift)), x, y + 6 * line + 10, 18, C_INK);
     
-    DrawText(TextFormat("Doctors:    %d / %d", busyDoctors, DOCTOR_COUNT), x, y + 7 * line + 10, 18, C_INK);
+    DrawText(TextFormat("Doctors:    %d / %d", busyDoctors, DOCTORS_ON(sim->shift)), x, y + 7 * line + 10, 18, C_INK);
     DrawText(TextFormat("Speed:      %.1fx", speed),                  x, y + 8 * line + 10, 18, C_INK);
 
     DrawCircle(x + 8, y + 295, 8, C_EMERGENCY);     DrawText("Emergency", x + 24, y + 288, 16, C_INK);
