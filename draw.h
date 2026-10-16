@@ -26,3 +26,4 @@
 void draw_frame(const Sim *sim, float speed, bool paused);
 
 #endif
+

@@ -8,11 +8,12 @@
 #include "sim.h"
 #include "roster.h"
 
-static float random_arrival_gap(void)
+static float random_arrival_gap(const Sim *sim)
 {
-    // 0.6 to 1.8 seconds. Was 0.3 to 1.5, but with 4 nurses that's more
-    // work than they can keep up with and the queue grows forever.
-    return (float)GetRandomValue(6, 20) / 10.0f; // changed 6 to 5 for testing queue growth
+    // Day: 0.6 to 2.0 seconds. Night: NIGHT_GAP_MIN to NIGHT_GAP_MAX, because
+    // fewer patients come in at night and only 1 doctor is on.
+    if (sim->shift == SHIFT_NIGHT) return (float)GetRandomValue(NIGHT_GAP_MIN, NIGHT_GAP_MAX) / 10.0f;
+    return (float)GetRandomValue(6, 20) / 10.0f;
 }
 
 static int random_severity(void)
@@ -50,7 +51,7 @@ void sim_init(Sim *sim, int day)
     sim->day = day;
     sim->shift = SHIFT_DAY;
     sim->nextId = 1;
-    sim->nextArrival = random_arrival_gap();
+    sim->nextArrival = random_arrival_gap(sim);
     for (int d = 0; d < NURSE_COUNT; d++) {
         sim->nurses[d].busyWithBed = -1;
     }
@@ -150,6 +151,12 @@ void sim_start_night(Sim *sim)
     sim->stats = (ShiftStats){ 0 };
     sim->shift = SHIFT_NIGHT;
     sim->shiftOver = false;
+
+    // Staff who aren't on nights go home. Their patients keep their bed and
+    // their progress, and the night staff pick them up.
+    for (int d = NURSES_ON(SHIFT_NIGHT); d < NURSE_COUNT; d++)   sim->nurses[d].busyWithBed = -1;
+    for (int d = DOCTORS_ON(SHIFT_NIGHT); d < DOCTOR_COUNT; d++) sim->doctors[d].busyWithBed = -1;
+
     roster_assign(sim);      // night shift staff
 }
 
@@ -182,7 +189,7 @@ void sim_update(Sim *sim, float dt)
     // 1. Arrivals
     while (sim->clock >= sim->nextArrival) {
         sim_add_patient(sim, random_severity());
-        sim->nextArrival += random_arrival_gap();
+        sim->nextArrival += random_arrival_gap(sim);
     }
 
         // 2. Assessment and treatment.
@@ -208,6 +215,7 @@ void sim_update(Sim *sim, float dt)
         }
 
         if (p->needsDoctor && d == -1) continue;   // waiting for a doctor
+        if (!p->needsDoctor && n == -1) continue;  // waiting for a nurse (theirs went home)
 
         p->treatmentLeft -= dt;
         if (p->treatmentLeft <= 0.0f) {
@@ -236,7 +244,7 @@ void sim_update(Sim *sim, float dt)
     }
 
     // 4. Nurse rounds: every free nurse goes to the most urgent untreated bed
-    for (int d = 0; d < NURSE_COUNT; d++) {
+    for (int d = 0; d < NURSES_ON(sim->shift); d++) {
         if (sim->nurses[d].busyWithBed != -1) continue;
 
         int bed = bed_needing_nurse(sim);
@@ -247,7 +255,7 @@ void sim_update(Sim *sim, float dt)
 
         // 5. Doctor rounds: every free doctor goes to the most urgent patient
     //    a nurse has sent to a doctor
-    for (int d = 0; d < DOCTOR_COUNT; d++) {
+    for (int d = 0; d < DOCTORS_ON(sim->shift); d++) {
         if (sim->doctors[d].busyWithBed != -1) continue;
 
         int bed = bed_needing_doctor(sim);
