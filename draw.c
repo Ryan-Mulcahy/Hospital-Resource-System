@@ -71,9 +71,9 @@ static void draw_beds(const Sim *sim)
         // Who is with them. Red text means the progress bar is stalled.
         int n = sim_nurse_at(sim, i);
         int d = sim_doctor_at(sim, i);
-        if (d != -1)             DrawText(TextFormat("Dr %d", d + 1),    x + 8, y0 + 92, 12, C_INK);
+        if (d != -1)             DrawText(TextFormat("Dr %s", sim->doctors[d].name), x + 8, y0 + 92, 12, C_INK);
         else if (p->needsDoctor) DrawText("needs Dr",                    x + 8, y0 + 92, 12, MAROON);
-        else if (n != -1)        DrawText(TextFormat("Nurse %d", n + 1), x + 8, y0 + 92, 12, C_BRAND);
+        else if (n != -1)        DrawText(sim->nurses[n].name,           x + 8, y0 + 92, 12, C_BRAND);
         else                     DrawText("no nurse",                    x + 8, y0 + 92, 12, MAROON);
 
         // Treatment progress bar
@@ -99,7 +99,7 @@ static void draw_nurses(const Sim *sim)
         DrawRectangleRoundedLines(card, 0.4f, 8, C_EDGE);
         //DrawRectangle(x, y0, w, h, busy ? C_BRAND : C_CARD);
         //DrawRectangleLines(x, y0, w, h, C_EDGE);
-        DrawText(TextFormat("Nurse %d", d + 1), x + 8, y0 + 6, 14, busy ? WHITE : C_INK);
+        DrawText(sim->nurses[d].name, x + 8, y0 + 6, 14, busy ? WHITE : C_INK);
         DrawText(busy ? TextFormat("Bed %d", bed + 1) : "free",
                  x + 8, y0 + 22, 12, busy ? WHITE : C_LIGHT);
     }
@@ -113,9 +113,8 @@ static void draw_nurses(const Sim *sim)
         Rectangle card = { x, y0, w, h };
         DrawRectangleRounded(card, 0.4f, 8, busy ? C_INK : C_CARD);
         DrawRectangleRoundedLines(card, 0.4f, 8, C_EDGE);
-        DrawText(TextFormat("Dr %d", d + 1), x + 8, y0 + 6, 14, busy ? WHITE : C_INK);
-        DrawText(busy ? TextFormat("Bed %d", bed + 1) : "free",
-                 x + 8, y0 + 22, 12, busy ? WHITE : C_LIGHT);
+        DrawText(TextFormat("Dr %s", sim->doctors[d].name), x + 8, y0 + 6, 14, busy ? WHITE : C_INK);
+        DrawText(busy ? TextFormat("Bed %d", bed + 1) : "free", x + 8, y0 + 22, 12, busy ? WHITE : C_LIGHT);
     }
 }
 

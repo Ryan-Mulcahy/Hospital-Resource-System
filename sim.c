@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include "raylib.h"          // GetRandomValue
 #include "sim.h"
+#include "roster.h"
 
 static float random_arrival_gap(void)
 {
@@ -56,6 +57,7 @@ void sim_init(Sim *sim, int day)
     for (int d = 0; d < DOCTOR_COUNT; d++) {
     sim->doctors[d].busyWithBed = -1;
     }
+    roster_assign(sim);      // day shift staff
 }
 
 int sim_nurse_at(const Sim *sim, int bed)
@@ -148,6 +150,7 @@ void sim_start_night(Sim *sim)
     sim->stats = (ShiftStats){ 0 };
     sim->shift = SHIFT_NIGHT;
     sim->shiftOver = false;
+    roster_assign(sim);      // night shift staff
 }
 
 // Clock time at which the current shift ends: 19:00 or 07:00 next morning.
