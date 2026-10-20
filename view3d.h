@@ -1,0 +1,18 @@
+// view3d.h - a 3D view of the department, as an alternative to the 2D screen.
+// Like draw.c it only reads the simulation; it never changes it.
+// Press V during a shift to switch between the 2D and 3D views.
+
+#ifndef VIEW3D_H
+#define VIEW3D_H
+
+#include <stdbool.h>
+#include "sim.h"
+
+// Camera controls: drag with the left mouse button to turn, scroll to zoom.
+// Call once per frame while the 3D view is showing, before drawing.
+void view3d_update_camera(void);
+
+// Draw one complete frame in 3D. Call between BeginDrawing() and EndDrawing().
+void view3d_draw(const Sim *sim, float speed, bool paused);
+
+#endif
