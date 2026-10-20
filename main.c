@@ -23,6 +23,7 @@
 #include "draw.h"
 #include "report.h"
 #include "roster.h"
+#include "view3d.h"
 #include "conditions.h"
  
 int main(void)
@@ -42,6 +43,7 @@ int main(void)
  
     bool paused = false;
     bool showRoster = true;  // roster screen before the shift starts
+    bool view3d = false;     // V switches between the 2D and 3D views
     float speed = 1.0f;
     bool viewingLog = false;   // on the report screen: showing the patients-treated page
     int logScroll = 0;         // first row shown on that page
@@ -85,6 +87,8 @@ int main(void)
         } else {
             // Input
             if (IsKeyPressed(KEY_SPACE)) paused = !paused;
+            if (IsKeyPressed(KEY_V)) view3d = !view3d;
+            if (view3d) view3d_update_camera();
             if (IsKeyPressed(KEY_UP) && speed < 8.0f) speed *= 2.0f;
             if (IsKeyPressed(KEY_DOWN) && speed > 0.5f) speed /= 2.0f;
             if (IsKeyPressed(KEY_E)) sim_add_patient(&sim, 1);
@@ -103,11 +107,13 @@ int main(void)
         if (showRoster)                  draw_roster_screen(sim.day, sim.shift);
         else if (sim.shiftOver && viewingLog) draw_patient_log(&sim, logScroll);
         else if (sim.shiftOver)          draw_shift_report(&sim);
+        else if (view3d)                 view3d_draw(&sim, speed, paused);
         else                             draw_frame(&sim, speed, paused);
         EndDrawing();
     }
  
     sim_free(&sim);
+    view3d_close();
     CloseWindow();
     return 0;
 }

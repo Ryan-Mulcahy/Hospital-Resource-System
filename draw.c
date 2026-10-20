@@ -175,6 +175,6 @@ void draw_frame(const Sim *sim, float speed, bool paused)
     draw_beds(sim);
     draw_nurses(sim);
     draw_stats(sim, speed, paused);
-    DrawText("SPACE pause   UP/DOWN speed   E emergency   R reset",
+    DrawText("V 3D view   SPACE pause   UP/DOWN speed   E emergency   R reset",
              40, SCREEN_H - 40, 16, C_MUTED);
 }
