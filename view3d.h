@@ -15,4 +15,7 @@ void view3d_update_camera(void);
 // Draw one complete frame in 3D. Call between BeginDrawing() and EndDrawing().
 void view3d_draw(const Sim *sim, float speed, bool paused);
 
+// Free the signs' textures. Call once before CloseWindow().
+void view3d_close(void);
+
 #endif

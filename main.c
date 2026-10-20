@@ -113,6 +113,7 @@ int main(void)
     }
  
     sim_free(&sim);
+    view3d_close();
     CloseWindow();
     return 0;
 }
