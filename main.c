@@ -8,6 +8,9 @@
 //                 and the shift clock
 //   draw.c/.h     everything drawn on screen during a shift
 //   report.c/.h   the end-of-shift report screen
+//   view3d.c/.h   the 3D view of A&E (V switches between 2D and 3D)
+//   rooms3d.c/.h  the rest of the hospital in 3D: ward, X-ray, MRI, bloods
+//                 and weight, operating theatre, nursery and admin office
 //   main.c        window, main loop and keyboard input
 //
 // A run covers one day: the day shift (07:00 to 19:00), then the night shift
@@ -17,6 +20,8 @@
 // Controls: SPACE pause | UP/DOWN speed | E spawn emergency | R restart the day
 //           N continue to the next shift, L view patients treated (report screen)
 //           wheel or UP/DOWN scroll, B go back (patients-treated page)
+//           3D view: drag to turn, right-drag to move, scroll to zoom,
+//           0 A&E, 1-7 rooms, 8 whole hospital
  
 #include "raylib.h"
 #include "sim.h"
