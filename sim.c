@@ -33,7 +33,7 @@ static int random_severity(void)
 }
  
 // ---- Rooms after A&E ----
- 
+
 // Name, places, and simulated seconds per patient (1 second = 4 minutes)
 static const struct { const char *name, *key; int capacity; float duration; } ROOM_INFO[ROOM_TYPES] = {
     [ROOM_XRAY]    = { "X-ray",   "xray",    1,  3.0f },   // 12 minutes
@@ -42,7 +42,7 @@ static const struct { const char *name, *key; int capacity; float duration; } RO
     [ROOM_THEATRE] = { "Theatre", "theatre", 1, 15.0f },   // an hour
     [ROOM_WARD]    = { "Ward",    "ward",    4, 30.0f },   // two hours on the ward
 };
- 
+
 static void rooms_init(Sim *sim)
 {
     for (int r = 0; r < ROOM_TYPES; r++) {
@@ -52,7 +52,7 @@ static void rooms_init(Sim *sim)
         sim->rooms[r].duration = ROOM_INFO[r].duration;
     }
 }
- 
+
 // Read a pathway like "theatre+ward" into the patient's route. Unknown words
 // are skipped; "home" (or nothing) means no rooms at all.
 static void set_route(Patient *p, const char *pathway)
@@ -71,14 +71,14 @@ static void set_route(Patient *p, const char *pathway)
         s = plus + 1;
     }
 }
- 
+
 void sim_route_text(const Patient *p, char *out, int size)
 {
     if (p->route[0] == ROOM_NONE) { snprintf(out, (size_t)size, "Home"); return; }
     if (p->route[1] == ROOM_NONE) snprintf(out, (size_t)size, "%s", ROOM_INFO[p->route[0]].name);
     else snprintf(out, (size_t)size, "%s, %s", ROOM_INFO[p->route[0]].name, ROOM_INFO[p->route[1]].name);
 }
- 
+
 int sim_patients_in_rooms(const Sim *sim)
 {
     int n = 0;
@@ -88,7 +88,7 @@ int sim_patients_in_rooms(const Sim *sim)
     }
     return n;
 }
- 
+
 // Send a patient on to the next room on their route, or home (freed).
 static void send_on(Sim *sim, Patient *p)
 {
@@ -101,7 +101,7 @@ static void send_on(Sim *sim, Patient *p)
     sim->rooms[r].queueCount++;
     sim->stats.sentTo[r]++;
 }
- 
+
 // Time passes in every room: finished patients move on, then free places
 // take the next patient from the room's queue.
 static void update_rooms(Sim *sim, float dt)
@@ -129,7 +129,7 @@ static void update_rooms(Sim *sim, float dt)
         }
     }
 }
- 
+
 // The next helicopter rescue: somewhere between `from` and `to` (fractions of
 // the way through the shift).
 static void schedule_rescue(Sim *sim, float from, float to)
@@ -138,7 +138,7 @@ static void schedule_rescue(Sim *sim, float from, float to)
     float k = from + (to - from) * (float)GetRandomValue(0, 100) / 100.0f;
     sim->nextRescue = start + k * SHIFT_LENGTH;
 }
- 
+
 void sim_add_patient(Sim *sim, int severity)
 {
     Patient *p = malloc(sizeof(Patient));
@@ -156,6 +156,7 @@ void sim_add_patient(Sim *sim, int severity)
     p->needsDoctor = false;
     p->condition = conditions_random(severity);
     p->rescue = false;
+    p->rescueService = 0;
     p->roomLeft = 0.0f;
     set_route(p, p->condition->pathway);
     p->next = NULL;
@@ -164,7 +165,7 @@ void sim_add_patient(Sim *sim, int severity)
     sim->waitingCount++;
     sim->stats.arrived++;
 }
- 
+
 void sim_add_rescue(Sim *sim)
 {
     sim_add_patient(sim, 1);
@@ -176,9 +177,11 @@ void sim_add_rescue(Sim *sim)
     *link = p->next;
     p->next = sim->waiting;
     sim->waiting = p;
- 
+
     p->rescue = true;
-    p->condition = conditions_rescue();
+    RescueService service;
+    p->condition = conditions_rescue(&service);
+    p->rescueService = (int)service;
     set_route(p, p->condition->pathway);
     p->treatmentTotal = 9.0f + (float)GetRandomValue(0, 20) / 10.0f;
     p->treatmentLeft = p->treatmentTotal;
@@ -323,6 +326,7 @@ static void log_treated(Sim *sim, const Patient *p, const char *treatedBy)
     snprintf(r->treatedBy, sizeof r->treatedBy, "%s", treatedBy);
     r->sawDoctor = p->needsDoctor;
     r->rescue = p->rescue;
+    r->rescueService = p->rescueService;
     sim_route_text(p, r->sentTo, (int)sizeof r->sentTo);
     r->arrivalTime = p->arrivalTime;
     r->wait = p->waitedFor;
@@ -399,7 +403,7 @@ bool sim_save_log_csv(const Sim *sim, const char *filename)
                 arrived, sim_minutes(r->wait), discharged,
                 sim_minutes(r->dischargeTime - r->arrivalTime),
                 r->treatedBy, r->sawDoctor ? "yes" : "no",
-                r->sentTo, r->rescue ? "yes" : "no");
+                r->sentTo, r->rescue ? rescue_service_name((RescueService)r->rescueService) : "no");
     }
  
     bool ok = !ferror(f);          // did any write fail (e.g. disk full)?

@@ -94,6 +94,7 @@ typedef struct {
     Place place;                 // where the simulation has them now
     Color gown;
     bool rescue;
+    int service;                 // which helicopter brings them (a RescueService)
     bool seen;                   // found in the simulation this frame
     bool leaving;                // gone from the simulation: walking out, then forgotten
     bool walking;                // on their way somewhere
@@ -121,6 +122,8 @@ typedef struct {
 #define HELI 2                   // vehicle number of the helicopter
 static Vehicle vehicles[AMB_BAYS + 1];   // ambulances 0 and 1 (one per bay), then the helicopter
 static float rotor = 0.0f;               // the helicopter's rotor angle, in degrees
+static int   heliService = 0;            // whose helicopter is flying: coast guard, search
+                                         // and rescue or fire service (a RescueService)
 
 // How long each part takes, in seconds at normal speed
 #define AMB_DRIVE_IN   4.0f
@@ -808,11 +811,15 @@ static void draw_ambulance(Vector3 pos, float angle, bool flashing)
     rlPopMatrix();
 }
 
-// The coast guard helicopter: red and white, with spinning rotors. `pos` is
-// the bottom of the skids; at angle 0 the nose points along +x.
-static void draw_helicopter(Vector3 pos, float angle)
+// A rescue helicopter with spinning rotors, in its service's colours:
+// coast guard blue and white, search and rescue white and red, fire service
+// orange and yellow. `pos` is the bottom of the skids; at angle 0 the nose
+// points along +x.
+static void draw_helicopter(Vector3 pos, float angle, int service)
 {
-    Color red = { 210, 45, 45, 255 }, glass = { 50, 70, 100, 255 };
+    Color body[SERVICE_COUNT]   = { {  40,  90, 190, 255 }, { 240, 242, 246, 255 }, { 225,  90,  25, 255 } };
+    Color stripe[SERVICE_COUNT] = { { 248, 248, 250, 255 }, { 210,  45,  45, 255 }, { 250, 215,  60, 255 } };
+    Color red = body[service], band = stripe[service], glass = { 50, 70, 100, 255 };
     shadow(pos.x, pos.z, 3.2f - fminf(pos.y, 8.0f) * 0.2f, 2.0f - fminf(pos.y, 8.0f) * 0.12f);
 
     rlPushMatrix();
@@ -826,13 +833,13 @@ static void draw_helicopter(Vector3 pos, float angle)
     }
     // Body: red with a white stripe, a glass nose, and the tail boom
     draw_box(v3(0.1f, 1.05f, 0), v3(2.6f, 1.15f, 1.35f), red);
-    draw_box(v3(0.1f, 0.95f, 0), v3(2.62f, 0.20f, 1.37f), C_CARD);
+    draw_box(v3(0.1f, 0.95f, 0), v3(2.62f, 0.20f, 1.37f), band);
     draw_box(v3(1.45f, 1.05f, 0), v3(0.3f, 0.75f, 1.15f), glass);                    // nose window
     draw_box(v3(0.75f, 1.30f, 0), v3(0.7f, 0.45f, 1.37f), glass);                    // side windows
-    draw_box(v3(-0.3f, 1.70f, 0), v3(1.4f, 0.35f, 0.9f), C_CARD);                    // engine on top
+    draw_box(v3(-0.3f, 1.70f, 0), v3(1.4f, 0.35f, 0.9f), band);                      // engine on top
     draw_box(v3(-2.2f, 1.30f, 0), v3(2.6f, 0.30f, 0.30f), red);                      // tail boom
     draw_box(v3(-3.4f, 1.75f, 0), v3(0.45f, 0.75f, 0.10f), red);                     // tail fin
-    draw_box(v3(-2.6f, 1.30f, 0), v3(0.25f, 0.30f, 0.32f), C_CARD);                  // white band
+    draw_box(v3(-2.6f, 1.30f, 0), v3(0.25f, 0.30f, 0.32f), band);                    // band round the tail
     // Tail rotor, spinning on the side of the fin
     rlPushMatrix();
     rlTranslatef(-3.4f, 1.75f, 0.12f);
@@ -1206,7 +1213,15 @@ static void update_vehicles(float dt)
     for (int k = 0; k <= HELI; k++) {
         Vehicle *v = &vehicles[k];
         if (v->state == V_IDLE) {
-            if (vehicle_has_passenger(k)) { v->state = V_ARRIVING; v->t = 0; }   // someone to bring in
+            if (vehicle_has_passenger(k)) {                                    // someone to bring in
+                v->state = V_ARRIVING;
+                v->t = 0;
+                if (k == HELI) {                  // the helicopter of whoever has waited longest
+                    for (int i = 0; i < MAX_TRACKED; i++) {
+                        if (tracked[i].used && tracked[i].vehicle == HELI) { heliService = tracked[i].service; break; }
+                    }
+                }
+            }
             continue;
         }
         v->t += dt;
@@ -1222,6 +1237,7 @@ static void unload_passengers(void)
     for (int i = 0; i < MAX_TRACKED; i++) {
         Tracked *t = &tracked[i];
         if (!t->used || t->vehicle < 0 || vehicles[t->vehicle].state != V_UNLOADING) continue;
+        if (t->vehicle == HELI && t->service != heliService) continue;   // their own service's helicopter comes next
         t->count = 0;
         if (t->vehicle == HELI) {
             t->pos = v3(HELI_X - 1.0f, 0, HELI_Z + 0.6f);
@@ -1272,6 +1288,7 @@ static void track_patient(const Patient *p, Place pl, bool fresh, bool resync)
         t->place = pl;
         t->gown = severity_color(p->severity);
         t->rescue = p->rescue;
+        t->service = p->rescueService;
         t->vehicle = -1;
         t->pos = place_stand(pl);
         t->seen = true;
@@ -1397,7 +1414,7 @@ static void draw_vehicles(void)
     if (vehicles[HELI].state != V_IDLE) {
         Vector3 pos; float angle;
         helicopter_place(&pos, &angle);
-        draw_helicopter(pos, angle);
+        draw_helicopter(pos, angle, heliService);
     }
 }
 
@@ -1796,6 +1813,6 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
 
     hud(sim, speed, paused);
     if (hoverBed != -1 && !IsMouseButtonDown(MOUSE_BUTTON_LEFT)) bed_tooltip(sim, hoverBed);
-    draw_rescue_banner(sim, SCREEN_W / 2, 72);      // "COAST GUARD RESCUE INBOUND"
+    draw_rescue_banner(sim, SCREEN_W / 2, 72);      // e.g. "COAST GUARD RESCUE INBOUND"
 
 }

@@ -18,12 +18,14 @@ static const Condition fallback[3] = {
     { 3, "Unspecified routine",   "R69", "" },
 };
 
-// Search and rescue cases brought in by helicopter. All emergencies.
-static const Condition rescues[] = {
-    { 1, "Hypothermia (sea rescue)",           "T68",   "ward" },
-    { 1, "Near drowning",                      "T75.1", "bloods+ward" },
-    { 1, "Fall from height (mountain rescue)", "T14.9", "theatre+ward" },
-    { 1, "Multiple injuries (cliff fall)",     "T07",   "mri+theatre" },
+// Cases brought in by helicopter, and which service flies each one. All emergencies.
+static const struct { Condition condition; RescueService service; } rescues[] = {
+    { { 1, "Hypothermia (sea rescue)",           "T68",   "ward" },         SERVICE_COAST_GUARD },
+    { { 1, "Near drowning",                      "T75.1", "bloods+ward" },  SERVICE_COAST_GUARD },
+    { { 1, "Fall from height (mountain rescue)", "T14.9", "theatre+ward" }, SERVICE_SEARCH_RESCUE },
+    { { 1, "Multiple injuries (cliff fall)",     "T07",   "mri+theatre" },  SERVICE_SEARCH_RESCUE },
+    { { 1, "Burns (house fire)",                 "T30.0", "theatre+ward" }, SERVICE_FIRE },
+    { { 1, "Smoke inhalation (house fire)",      "J70.5", "xray+ward" },    SERVICE_FIRE },
 };
 #define RESCUE_COUNT (int)(sizeof rescues / sizeof rescues[0])
 
@@ -110,7 +112,16 @@ const Condition *conditions_random(int severity)
     return &fallback[severity - 1];   // not reached
 }
 
-const Condition *conditions_rescue(void)
+const Condition *conditions_rescue(RescueService *service)
 {
-    return &rescues[GetRandomValue(0, RESCUE_COUNT - 1)];
+    int k = GetRandomValue(0, RESCUE_COUNT - 1);
+    *service = rescues[k].service;
+    return &rescues[k].condition;
+}
+
+const char *rescue_service_name(RescueService service)
+{
+    if (service == SERVICE_COAST_GUARD)   return "Coast Guard";
+    if (service == SERVICE_SEARCH_RESCUE) return "Search and Rescue";
+    return "Fire Service";
 }

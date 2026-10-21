@@ -16,7 +16,8 @@ typedef struct Patient {
     float waitedFor;         // seconds from arriving to getting a bed
     bool needsDoctor;        // the nurse's decision once the assessment is done
     const Condition *condition; // presenting condition, chosen to match severity
-    bool rescue;             // brought in by the rescue helicopter
+    bool rescue;             // brought in by helicopter
+    int rescueService;       // which service flew them in (a RescueService)
     int route[2];            // rooms to visit after A&E, in order (-1 = none)
     int routeStep;           // which of them they're on
     float roomLeft;          // seconds left in the room they're in now

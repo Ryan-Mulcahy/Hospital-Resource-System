@@ -231,6 +231,19 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
 // ---- Helicopter rescue banner ----
 static int    rescueLastId = 0;     // highest patient id already checked
 static double rescueUntil = 0.0;
+static int    rescueService = 0;    // which service is bringing the latest one
+
+// Each service's message and banner colour
+static const char *SERVICE_MESSAGE[SERVICE_COUNT] = {
+    "COAST GUARD RESCUE INBOUND",
+    "SEARCH AND RESCUE INBOUND",
+    "FIRE SERVICE HELICOPTER INBOUND",
+};
+static const Color SERVICE_COLOUR[SERVICE_COUNT] = {
+    {  40,  90, 190, 255 },     // coast guard: blue
+    { 210,  45,  45, 255 },     // search and rescue: red
+    { 235, 110,  30, 255 },     // fire service: orange
+};
 
 bool draw_rescue_banner(const Sim *sim, int centreX, int y)
 {
@@ -238,20 +251,20 @@ bool draw_rescue_banner(const Sim *sim, int centreX, int y)
     if (newest < rescueLastId) rescueLastId = newest;     // the day was restarted
     bool arrived = false;
     for (const Patient *p = sim->waiting; p != NULL; p = p->next) {
-        if (p->id > rescueLastId && p->rescue) arrived = true;
+        if (p->id > rescueLastId && p->rescue) { arrived = true; rescueService = p->rescueService; }
     }
     for (int b = 0; b < BED_COUNT; b++) {
         const Patient *p = sim->beds[b].occupant;
-        if (p && p->id > rescueLastId && p->rescue) arrived = true;
+        if (p && p->id > rescueLastId && p->rescue) { arrived = true; rescueService = p->rescueService; }
     }
     rescueLastId = newest;
     if (arrived) rescueUntil = GetTime() + 4.0;
 
     if (GetTime() >= rescueUntil) return arrived;
     float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 8.0f);
-    const char *text = "COAST GUARD RESCUE INBOUND";
+    const char *text = SERVICE_MESSAGE[rescueService];
     int w = MeasureText(text, 18) + 30;
-    Color bg = C_EMERGENCY;
+    Color bg = SERVICE_COLOUR[rescueService];
     bg.a = (unsigned char)(180 + 75 * pulse);
     DrawRectangleRounded((Rectangle){ (float)(centreX - w / 2), (float)y, (float)w, 30 }, 0.5f, 8, bg);
     DrawText(text, centreX - MeasureText(text, 18) / 2, y + 6, 18, WHITE);

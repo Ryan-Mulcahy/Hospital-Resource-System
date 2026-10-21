@@ -75,6 +75,7 @@ typedef struct {
     char treatedBy[TREATED_BY_LEN];  // e.g. "Nurse Aoife Byrne", or "Nurse 2" before names
     char sentTo[PATHWAY_LEN];        // rooms after A&E, e.g. "X-ray", or "Home"
     bool rescue;                     // came in by helicopter
+    int rescueService;               // ...and which service brought them
     bool sawDoctor;                  // true if a nurse sent them to a doctor
     float arrivalTime;               // clock time they arrived
     float wait;                      // seconds waiting for a bed
@@ -136,7 +137,8 @@ void sim_start_night(Sim *sim);
 void sim_update(Sim *sim, float dt);
 void sim_add_patient(Sim *sim, int severity);
 
-// A search and rescue patient, flown in by helicopter: an emergency who goes
+// A patient flown in by helicopter (coast guard, search and rescue or the fire
+// service, depending on what happened to them): an emergency who goes
 // straight to the front of the queue. Happens by itself 1 or 2 times a shift;
 // the H key adds one too.
 void sim_add_rescue(Sim *sim);

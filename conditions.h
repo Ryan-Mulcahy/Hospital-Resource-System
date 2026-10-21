@@ -27,7 +27,15 @@ int conditions_load(const char *filename);
 // of that severity was loaded, a built-in "Unspecified" entry is returned.
 const Condition *conditions_random(int severity);
 
-// A condition for a patient brought in by the rescue helicopter.
-const Condition *conditions_rescue(void);
+// Who flies a rescue patient in. Each service has its own helicopter colours
+// and its own message.
+typedef enum { SERVICE_COAST_GUARD, SERVICE_SEARCH_RESCUE, SERVICE_FIRE, SERVICE_COUNT } RescueService;
+
+// A condition for a patient brought in by helicopter, and which service
+// brought them (a sea rescue comes with the coast guard, and so on).
+const Condition *conditions_rescue(RescueService *service);
+
+// "Coast Guard", "Search and Rescue" or "Fire Service".
+const char *rescue_service_name(RescueService service);
 
 #endif
