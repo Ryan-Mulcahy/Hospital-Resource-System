@@ -12,6 +12,10 @@
 //   front:  the waiting room, with a chair for each waiting patient,
 //           reception, a vending machine, a water cooler and a TV
 //   right:  the entrance doors, and the ambulance bay outside
+//   left:   a doorway into the corridor to the rest of the hospital, which
+//           rooms3d.c draws (ward, X-ray, MRI, bloods, theatre, nursery, admin)
+//
+// Shared colours and helpers are in view3d_parts.h, so rooms3d.c can use them.
 //
 // Patients walk in through the doors to a chair, and walk out again when
 // they are discharged. The ambulance lights flash when an emergency arrives.
@@ -22,6 +26,8 @@
 #include "rlgl.h"            // lower-level drawing: glows and signs with text on them
 #include "draw.h"            // colours and screen size
 #include "view3d.h"
+#include "view3d_parts.h"   // colours and helpers shared with rooms3d.c
+#include "rooms3d.h"        // the rest of the hospital
 
 // ---- Layout ----
 #define BED_Z        -3.2f   // the row of beds
@@ -39,32 +45,18 @@
 #define AMBULANCE_X   11.4f  // middle of the ambulance, parked outside
 #define AMBULANCE_Z    3.5f
 
-// ---- Colours used only in 3D ----
-#define C_SKIN      (Color){ 232, 190, 160, 255 }
-#define C_HAIR      (Color){  70,  50,  40, 255 }
-#define C_BEDFRAME  (Color){ 210, 216, 226, 255 }
-#define C_MATTRESS  (Color){ 245, 248, 252, 255 }
-#define C_WALL      (Color){ 238, 241, 245, 255 }   // upper wall, off-white
-#define C_WALL_LOW  (Color){ 196, 226, 214, 255 }   // lower wall, hospital mint
-#define C_STRIPE    (Color){  58, 150, 120, 255 }   // green stripe along the walls
-#define C_DESK      (Color){ 150, 120,  95, 255 }
-#define C_CHAIR     (Color){ 120, 135, 160, 255 }
-#define C_TROUSERS  (Color){  45,  58,  80, 255 }
-#define C_COAT      (Color){ 248, 248, 250, 255 }
-#define C_SCRUBCAP  (Color){ 120, 165, 225, 255 }
-#define C_STEEL     (Color){ 170, 178, 190, 255 }
-#define C_DARK      (Color){  40,  44,  52, 255 }
-#define C_CURTAIN   (Color){ 176, 214, 214, 255 }
-#define C_ASPHALT   (Color){  92,  97, 105, 255 }
-#define C_HIVIS     (Color){ 222, 226,  40, 255 }   // ambulance yellow
-#define C_AMB_GREEN (Color){  40, 140,  70, 255 }   // ambulance check pattern
-#define C_GLASS     (Color){ 170, 210, 235, 110 }   // see-through door glass
-#define C_RECEPTION (Color){ 135,  95, 170, 255 }   // receptionist's top
 
 // ---- Camera, controlled by the mouse ----
 static float camYaw   = 0.0f;    // degrees around the department
 static float camPitch = 42.0f;   // degrees above the floor
 static float camDist  = 21.0f;   // distance from the centre
+static Vector3 camTarget = { 3.0f, 0.4f, 0.9f };   // the point the camera looks at
+                                                 // (a little right of A&E, to fit the ambulance in)
+
+// Number keys glide the camera to a room. These are where it's gliding to.
+static bool    gliding = false;
+static Vector3 goalTarget;
+static float   goalYaw, goalPitch, goalDist;
 
 // ---- Where each member of staff is standing; they walk between spots ----
 static Vector3 nursePos[NURSE_COUNT];
@@ -110,12 +102,12 @@ static bool lowBack, lowLeft, lowRight;
 // Small helpers
 // ------------------------------------------------------------------------
 
-static Vector3 v3(float x, float y, float z) { return (Vector3){ x, y, z }; }
+Vector3 v3(float x, float y, float z) { return (Vector3){ x, y, z }; }
 
 static float bed_x(int i) { return -6.25f + i * BED_SPACING; }
 
 // Colour with a brightness factor, darker and bluer at night.
-static Color shade(Color c, float f)
+Color shade(Color c, float f)
 {
     float r = c.r * f, g = c.g * f, b = c.b * f;
     if (night) { r *= 0.50f; g *= 0.56f; b *= 0.78f; }
@@ -125,14 +117,14 @@ static Color shade(Color c, float f)
 
 // One flat four-sided face. Back-face culling is switched off while the 3D
 // view draws, so it shows from either side whichever way the camera looks.
-static void quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color col)
+void quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color col)
 {
     DrawTriangle3D(a, b, c, col);
     DrawTriangle3D(a, c, d, col);
 }
 
 // A box centred on p, with each face shaded differently to fake lighting.
-static void draw_box(Vector3 p, Vector3 size, Color c)
+void draw_box(Vector3 p, Vector3 size, Color c)
 {
     float x0 = p.x - size.x / 2, x1 = p.x + size.x / 2;
     float y0 = p.y - size.y / 2, y1 = p.y + size.y / 2;
@@ -147,7 +139,7 @@ static void draw_box(Vector3 p, Vector3 size, Color c)
 }
 
 // A box that gives off its own light (lamps, screens): not darkened at night.
-static void draw_lit_box(Vector3 p, Vector3 size, Color c)
+void draw_lit_box(Vector3 p, Vector3 size, Color c)
 {
     bool wasNight = night;
     night = false;
@@ -156,7 +148,7 @@ static void draw_lit_box(Vector3 p, Vector3 size, Color c)
 }
 
 // A soft dark patch on the floor under people and furniture.
-static void shadow(float x, float z, float w, float d)
+void shadow(float x, float z, float w, float d)
 {
     Color c = { 0, 0, 0, night ? 70 : 38 };
     quad(v3(x - w/2, 0.01f, z - d/2), v3(x + w/2, 0.01f, z - d/2),
@@ -165,7 +157,7 @@ static void shadow(float x, float z, float w, float d)
 
 // A round pool of light on the floor: bright in the middle, fading to nothing
 // at the edge. Must be drawn inside BeginBlendMode(BLEND_ADDITIVE).
-static void glow(float x, float z, float radius, Color c)
+void glow(float x, float z, float radius, Color c)
 {
     const int slices = 20;
     rlBegin(RL_TRIANGLES);
@@ -181,7 +173,7 @@ static void glow(float x, float z, float radius, Color c)
 // A sign: a texture stretched over four corners (top-left, top-right,
 // bottom-right, bottom-left). Render textures are stored upside down, so the
 // top of the picture is at v = 1.
-static void sign_quad(Texture2D t, Vector3 tl, Vector3 tr, Vector3 br, Vector3 bl)
+void sign_quad(Texture2D t, Vector3 tl, Vector3 tr, Vector3 br, Vector3 bl)
 {
     Color tint = shade(WHITE, 1.0f);
     rlSetTexture(t.id);
@@ -196,7 +188,7 @@ static void sign_quad(Texture2D t, Vector3 tl, Vector3 tr, Vector3 br, Vector3 b
 }
 
 // A sign on a flat plate facing the camera side (+z), centred on (x, y) at depth z.
-static void sign_facing_front(Texture2D t, float x, float y, float z, float w, float h)
+void sign_facing_front(Texture2D t, float x, float y, float z, float w, float h)
 {
     sign_quad(t, v3(x - w/2, y + h/2, z), v3(x + w/2, y + h/2, z),
                  v3(x + w/2, y - h/2, z), v3(x - w/2, y - h/2, z));
@@ -227,9 +219,6 @@ static bool is_walking(Vector3 from, Vector3 to)
 // People
 // ------------------------------------------------------------------------
 
-// Which way a person faces. SOUTH is towards the camera (+z).
-typedef enum { FACE_SOUTH, FACE_NORTH, FACE_EAST, FACE_WEST } Facing;
-
 // The way to face when moving from `from` to `to`.
 static Facing facing_for(Vector3 from, Vector3 to)
 {
@@ -255,17 +244,8 @@ static void part(float lx, float y, float lz, float sx, float sy, float sz, Colo
     draw_box(v3(partBase.x + wx, y, partBase.z + wz), v3(wsx, sy, wsz), c);
 }
 
-// What a person is wearing and carrying.
-typedef struct {
-    Color top, legs;
-    bool coat;          // doctor's long white coat
-    bool stethoscope;
-    bool cap;           // nurse's scrub cap
-    bool clipboard;
-} Outfit;
-
 // A standing person. `phase` swings the arms and legs while walking.
-static void draw_person(Vector3 p, Facing face, Outfit o, bool walking, float phase)
+void draw_person(Vector3 p, Facing face, Outfit o, bool walking, float phase)
 {
     float swing = walking ? sinf(phase) : 0.0f;
     partBase = p;
@@ -362,7 +342,7 @@ static float heartbeat(float t)
 
 // A heart monitor on a stand. The trace scrolls across the screen,
 // faster for more serious patients, and goes red for an emergency.
-static void draw_monitor(float x, float z, const Patient *p)
+void draw_monitor(float x, float z, const Patient *p)
 {
     shadow(x, z, 0.4f, 0.4f);
     draw_box(v3(x, 0.03f, z), v3(0.40f, 0.05f, 0.40f), C_STEEL);                     // base
@@ -447,7 +427,7 @@ static void draw_chair(float x, float z, const Patient *p)
 static float chair_x(int seat) { return -5.4f + (seat % CHAIRS_PER_ROW) * CHAIR_SPACING; }
 static float chair_z(int seat) { return 2.6f + (seat / CHAIRS_PER_ROW) * 1.7f; }
 
-static void draw_plant(float x, float z)
+void draw_plant(float x, float z)
 {
     shadow(x, z, 0.6f, 0.6f);
     draw_box(v3(x, 0.22f, z), v3(0.45f, 0.44f, 0.45f), (Color){ 185, 110, 70, 255 });  // pot
@@ -520,7 +500,7 @@ static void update_tv(const Sim *sim)
 
 // A wall: mint lower half, green stripe, off-white upper half. A low wall
 // (one facing the camera) is only the lower half, cut down.
-static void draw_wall(Vector3 centre, float lengthX, float lengthZ, float height, bool low)
+void draw_wall(Vector3 centre, float lengthX, float lengthZ, float height, bool low)
 {
     float lowH = low ? 0.35f : fminf(1.0f, height);
     draw_box(v3(centre.x, lowH / 2, centre.z), v3(lengthX, lowH, lengthZ), C_WALL_LOW);
@@ -576,7 +556,7 @@ static void draw_floor(void)
 }
 
 // A wall clock showing the shift time.
-static void draw_clock(float x, float y, float z, int hour, int minute)
+void draw_clock(float x, float y, float z, int hour, int minute)
 {
     const int slices = 24;
     float r = 0.34f;
@@ -680,7 +660,8 @@ static void draw_room(const Sim *sim)
     // Walls: back, left, and right (split by the doors). Walls between the
     // camera and the room are cut down low so they never block the view.
     draw_wall(v3(0, 0, -5.1f), 16.4f, 0.2f, WALL_BACK_H, lowBack);
-    draw_wall(v3(-8.1f, 0, 0.5f), 0.2f, 11.4f, WALL_SIDE_H, lowLeft);
+    draw_wall(v3(-8.1f, 0, -3.4f), 0.2f, 3.6f, WALL_SIDE_H, lowLeft);              // left, with a doorway
+    draw_wall(v3(-8.1f, 0,  3.0f), 0.2f, 6.4f, WALL_SIDE_H, lowLeft);              // to the corridor
     draw_wall(v3(DOOR_X, 0, (-5.2f + DOOR_Z0) / 2), 0.2f, DOOR_Z0 + 5.2f, WALL_RIGHT_H, lowRight);
     draw_wall(v3(DOOR_X, 0, (DOOR_Z1 + 6.2f) / 2), 0.2f, 6.2f - DOOR_Z1, WALL_RIGHT_H, lowRight);
     draw_box(v3(-5.0f, 0.35f, 1.0f), v3(6.0f, 0.7f, 0.15f), C_WALL_LOW);              // ward / waiting divider,
@@ -905,7 +886,7 @@ static void draw_walkers(void)
 // Signs, made once the first time the 3D view is shown
 // ------------------------------------------------------------------------
 
-static RenderTexture2D make_sign(const char *text, int w, int h, int size, Color bg, Color fg)
+RenderTexture2D make_sign(const char *text, int w, int h, int size, Color bg, Color fg)
 {
     RenderTexture2D rt = LoadRenderTexture(w, h);
     BeginTextureMode(rt);
@@ -939,6 +920,7 @@ void view3d_close(void)
     UnloadRenderTexture(signReception);
     UnloadRenderTexture(signAmbulance);
     UnloadRenderTexture(tvScreen);
+    rooms3d_close();
     signsReady = false;
 }
 
@@ -946,24 +928,81 @@ void view3d_close(void)
 // Camera
 // ------------------------------------------------------------------------
 
+// Start gliding the camera to look at `target` from `dist` away.
+static void glide_to(Vector3 target, float yaw, float pitch, float dist)
+{
+    goalTarget = target;
+    goalYaw = yaw;
+    goalPitch = pitch;
+    goalDist = dist;
+    gliding = true;
+    // Turn the short way round: keep the current angle within half a turn of the goal
+    camYaw = fmodf(camYaw - yaw, 360.0f);
+    if (camYaw > 180.0f)  camYaw -= 360.0f;
+    if (camYaw < -180.0f) camYaw += 360.0f;
+    camYaw += yaw;
+}
+
 void view3d_update_camera(void)
 {
+    // Number keys: 0 A&E, 1-7 the other rooms, 8 the whole hospital
+    if (IsKeyPressed(KEY_ZERO))  glide_to(v3(3.0f, 0.4f, 0.9f), 0.0f, 42.0f, 21.0f);
+    if (IsKeyPressed(KEY_EIGHT)) glide_to(v3(-4.0f, 0.4f, -3.2f), 0.0f, 58.0f, 38.0f);
+    for (int room = 1; room <= ROOM_COUNT; room++) {
+        if (IsKeyPressed(KEY_ZERO + room)) {
+            Vector3 centre;
+            float dist = rooms3d_focus(room, &centre);
+            glide_to(centre, 0.0f, 50.0f, dist);
+        }
+    }
+
+    // Left-drag turns the camera; right-drag moves it across the floor
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
         Vector2 d = GetMouseDelta();
         camYaw   -= d.x * 0.3f;
         camPitch += d.y * 0.3f;
-        if (camPitch < 12.0f) camPitch = 12.0f;
-        if (camPitch > 85.0f) camPitch = 85.0f;
+        gliding = false;
     }
-    camDist -= GetMouseWheelMove() * 1.2f;
+    if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+        Vector2 d = GetMouseDelta();
+        float yaw = camYaw * DEG2RAD, k = camDist * 0.0025f;
+        // right and forward along the floor, as seen from the camera
+        Vector3 right = v3(cosf(yaw), 0, -sinf(yaw)), fwd = v3(-sinf(yaw), 0, -cosf(yaw));
+        camTarget.x += (-right.x * d.x + fwd.x * d.y) * k;
+        camTarget.z += (-right.z * d.x + fwd.z * d.y) * k;
+        gliding = false;
+    }
+    float wheel = GetMouseWheelMove();
+    if (wheel != 0.0f) {
+        camDist -= wheel * 1.2f;
+        gliding = false;
+    }
+
+    if (gliding) {
+        float t = 1.0f - expf(-5.0f * GetFrameTime());
+        camTarget.x += (goalTarget.x - camTarget.x) * t;
+        camTarget.z += (goalTarget.z - camTarget.z) * t;
+        camYaw   += (goalYaw - camYaw) * t;
+        camPitch += (goalPitch - camPitch) * t;
+        camDist  += (goalDist - camDist) * t;
+        if (fabsf(goalDist - camDist) < 0.05f && fabsf(goalYaw - camYaw) < 0.1f &&
+            fabsf(goalPitch - camPitch) < 0.1f && fabsf(goalTarget.x - camTarget.x) < 0.02f &&
+            fabsf(goalTarget.z - camTarget.z) < 0.02f) gliding = false;
+    }
+
+    // Keep the camera above the floor and within reach of the building
+    if (camPitch < 12.0f) camPitch = 12.0f;
+    if (camPitch > 85.0f) camPitch = 85.0f;
     if (camDist < 7.0f)  camDist = 7.0f;
-    if (camDist > 32.0f) camDist = 32.0f;
+    if (camDist > 48.0f) camDist = 48.0f;
+    camTarget.x = fminf(fmaxf(camTarget.x, -17.0f), 14.0f);
+    camTarget.z = fminf(fmaxf(camTarget.z, -13.0f), 8.0f);
 }
 
 static Camera3D make_camera(void)
 {
     float yaw = camYaw * DEG2RAD, pitch = camPitch * DEG2RAD;
-    Vector3 target = v3(3.0f, 0.4f, 0.9f);     // a little to the right, to fit the ambulance in
+    Vector3 target = camTarget;
     Camera3D cam = { 0 };
     cam.target   = target;
     cam.position = v3(target.x + camDist * sinf(yaw) * cosf(pitch),
@@ -1040,7 +1079,8 @@ static void hud(const Sim *sim, float speed, bool paused)
     Color soft = night ? (Color){ 150, 165, 190, 255 } : C_MUTED;
 
     DrawText("Hospital Resource Simulator", 20, 16, 24, night ? (Color){ 140, 180, 240, 255 } : C_BRAND);
-    DrawText("3D VIEW", 20, 46, 16, soft);
+    const char *where = (camDist > 36.0f) ? "WHOLE HOSPITAL" : rooms3d_name_at(camTarget.x, camTarget.z);
+    DrawText(TextFormat("3D VIEW   %s", where), 20, 46, 16, soft);
 
     // Stats card, top right
     int busyN = 0, busyD = 0;
@@ -1062,7 +1102,9 @@ static void hud(const Sim *sim, float speed, bool paused)
 
     if (paused) DrawText("PAUSED", SCREEN_W / 2 - MeasureText("PAUSED", 30) / 2, 20, 30, C_EMERGENCY);
 
-    DrawText("V 2D view   Drag to turn   Scroll to zoom   SPACE pause   UP/DOWN speed   E emergency",
+    DrawText("0 A&E   1 Ward   2 X-ray   3 MRI   4 Bloods   5 Theatre   6 Nursery   7 Admin   8 Whole hospital",
+             20, SCREEN_H - 50, 14, soft);
+    DrawText("V 2D view   Drag to turn   Right-drag to move   Scroll to zoom   SPACE pause   UP/DOWN speed   E emergency",
              20, SCREEN_H - 30, 14, soft);
 }
 
@@ -1074,6 +1116,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
 {
     night = (sim->shift == SHIFT_NIGHT);
     if (!signsReady) make_signs();
+    rooms3d_prepare(sim);            // the other rooms' signs, before the scene too
     update_tv(sim);                  // draws into the TV's picture, so before the scene
     update_walkers(sim, paused ? 0.0f : speed);
     bool flashing = GetTime() < flashUntil;
@@ -1085,6 +1128,9 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     lowBack  = look.z / len < -0.30f;
     lowLeft  = look.x / len < -0.35f;
     lowRight = look.x / len >  0.35f;
+    // Looking at the rooms behind or to the left of A&E: lower the A&E wall in the way
+    if (camTarget.z < -4.5f && look.z > 0) lowBack = true;
+    if (camTarget.x < -7.5f && look.x > 0) lowLeft = true;
 
     // Where everyone should be standing: by their bed, or at the station.
     if (!staffPlaced) {
@@ -1110,6 +1156,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         rlDisableBackfaceCulling();          // so every face shows from both sides
 
         draw_room(sim);
+        rooms3d_draw(sim, cam.position, cam.target);
         for (int i = 0; i < BED_COUNT; i++) {
             const Patient *bp = sim->beds[i].occupant;
             draw_bed(bed_x(i));
@@ -1144,6 +1191,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         draw_walkers();
         draw_ambulance(flashing);
         if (!lowRight) draw_door_glass();      // see-through, so last
+        rooms3d_draw_glass();
 
         // Light. By day, soft pools under the ceiling lights. At night the room
         // is dark, with a lamp over each patient, the station lamp and the doors.
@@ -1161,6 +1209,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
                 glow(DOOR_X, 3.5f, 1.8f, (Color){ 200, 220, 255, 50 });
                 glow(6.6f, 1.75f, 1.4f, (Color){ 255, 220, 160, 45 });           // reception
             }
+            rooms3d_lights(sim);
             if (flashing) {
                 bool redOn = fmodf((float)GetTime() * 6.0f, 2.0f) < 1.0f;
                 glow(AMBULANCE_X + 1.0f, AMBULANCE_Z, 3.2f,
