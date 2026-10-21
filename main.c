@@ -4,8 +4,8 @@
 //
 // Files:
 //   patient.c/.h  patient record and waiting queue
-//   sim.c/.h      simulation state: arrivals, treatment, admission, nurses
-//                 and the shift clock
+//   sim.c/.h      simulation state: arrivals, treatment, admission, nurses,
+//                 the rooms after A&E, helicopter rescues and the shift clock
 //   draw.c/.h     everything drawn on screen during a shift
 //   report.c/.h   the end-of-shift report screen
 //   view3d.c/.h   the 3D view of A&E (V switches between 2D and 3D)
@@ -18,10 +18,11 @@
 // in the department at 19:00 are handed over to the night shift.
 //
 // Controls: SPACE pause | UP/DOWN speed | E spawn emergency | R restart the day
+//           H helicopter rescue
 //           N continue to the next shift, L view patients treated (report screen)
 //           wheel or UP/DOWN scroll, B go back (patients-treated page)
 //           3D view: drag to turn, right-drag to move, scroll to zoom,
-//           0 A&E, 1-7 rooms, 8 whole hospital
+//           0 A&E, 1-7 rooms, 8 whole hospital, 9 helipad and ambulance bay
  
 #include "raylib.h"
 #include "sim.h"
@@ -97,6 +98,7 @@ int main(void)
             if (IsKeyPressed(KEY_UP) && speed < 8.0f) speed *= 2.0f;
             if (IsKeyPressed(KEY_DOWN) && speed > 0.5f) speed /= 2.0f;
             if (IsKeyPressed(KEY_E)) sim_add_patient(&sim, 1);
+            if (IsKeyPressed(KEY_H)) sim_add_rescue(&sim);     // search and rescue, by helicopter
             if (IsKeyPressed(KEY_R)) {
                 int day = sim.day;
                 sim_free(&sim);

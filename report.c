@@ -107,7 +107,11 @@ void draw_shift_report(const Sim *sim)
     row(night ? "Waiting at end of day" : "Waiting at handover",
         TextFormat("%d", sim->waitingCount), LEFT_LABEL, LEFT_VALUE, y);                  y += ROW;
     row("Still in a bed", TextFormat("%d", inBeds), LEFT_LABEL, LEFT_VALUE, y);           y += ROW;
-    row("Sent to a doctor", TextFormat("%d", s->sawDoctor), LEFT_LABEL, LEFT_VALUE, y);
+    row("Sent to a doctor", TextFormat("%d", s->sawDoctor), LEFT_LABEL, LEFT_VALUE, y);    y += ROW;
+    int tests = s->sentTo[ROOM_XRAY] + s->sentTo[ROOM_MRI] + s->sentTo[ROOM_BLOODS] + s->sentTo[ROOM_THEATRE];
+    row("Sent for tests / surgery", TextFormat("%d", tests), LEFT_LABEL, LEFT_VALUE, y);  y += ROW;
+    row("Admitted to the ward", TextFormat("%d", s->sentTo[ROOM_WARD]), LEFT_LABEL, LEFT_VALUE, y); y += ROW;
+    row("Helicopter rescues", TextFormat("%d", s->rescues), LEFT_LABEL, LEFT_VALUE, y);
     // Right column: waiting times and resource use
     y = 135;
     heading("WAITING FOR A BED", RIGHT_LABEL, y);                                         y += 26;

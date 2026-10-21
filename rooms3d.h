@@ -34,4 +34,12 @@ float rooms3d_focus(int room, Vector3 *centre);
 // The name of the room at a point on the floor, e.g. "X-RAY", "A&E" or "CORRIDOR".
 const char *rooms3d_name_at(float x, float z);
 
+// Walking routes for real patients. Every route starts at the junction in the
+// corridor just outside A&E's side door. rooms3d_path fills `pts` with the
+// way from there to a place for a simulation room (RoomType): place 0, 1, ...
+// is a place in the room; -1, -2, ... is a spot in its queue. Returns how
+// many points it wrote (at most `max`).
+Vector3 rooms3d_junction(void);
+int rooms3d_path(int room, int place, Vector3 *pts, int max);
+
 #endif

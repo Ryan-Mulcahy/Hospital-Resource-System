@@ -13,10 +13,19 @@ static int count = 0;
 // Used when the file is missing or has nothing for a severity.
 // R69 is the ICD-10 code for "Illness, unspecified".
 static const Condition fallback[3] = {
-    { 1, "Unspecified emergency", "R69" },
-    { 2, "Unspecified urgent",    "R69" },
-    { 3, "Unspecified routine",   "R69" },
+    { 1, "Unspecified emergency", "R69", "" },
+    { 2, "Unspecified urgent",    "R69", "" },
+    { 3, "Unspecified routine",   "R69", "" },
 };
+
+// Search and rescue cases brought in by helicopter. All emergencies.
+static const Condition rescues[] = {
+    { 1, "Hypothermia (sea rescue)",           "T68",   "ward" },
+    { 1, "Near drowning",                      "T75.1", "bloods+ward" },
+    { 1, "Fall from height (mountain rescue)", "T14.9", "theatre+ward" },
+    { 1, "Multiple injuries (cliff fall)",     "T07",   "mri+theatre" },
+};
+#define RESCUE_COUNT (int)(sizeof rescues / sizeof rescues[0])
 
 // Skip spaces and tabs at the start of a string.
 static const char *skip_spaces(const char *s)
@@ -44,14 +53,20 @@ int conditions_load(const char *filename)
 
     char line[256];
     while (count < MAX_CONDITIONS && fgets(line, sizeof line, f) != NULL) {
-        // Split the line at its first two commas: severity , name , code
+        // Split the line at its commas: severity , name , code [, pathway]
         char *comma1 = strchr(line, ',');
         char *comma2 = comma1 ? strchr(comma1 + 1, ',') : NULL;
         if (comma2 == NULL) continue;              // not three columns
         *comma1 = '\0';
         *comma2 = '\0';
-        char *comma3 = strchr(comma2 + 1, ',');    // ignore any extra columns
-        if (comma3 != NULL) *comma3 = '\0';
+        char *comma3 = strchr(comma2 + 1, ',');    // the pathway column, if there is one
+        const char *pathway = "";
+        if (comma3 != NULL) {
+            *comma3 = '\0';
+            pathway = skip_spaces(comma3 + 1);
+            char *comma4 = strchr(comma3 + 1, ',');   // ignore any extra columns
+            if (comma4 != NULL) *comma4 = '\0';
+        }
 
         // strtol skips leading spaces; the header row ("severity") has no number
         char *end;
@@ -64,8 +79,10 @@ int conditions_load(const char *filename)
         // shortened rather than overflowing or making the line be skipped
         snprintf(c.name,  sizeof c.name,  "%s", skip_spaces(comma1 + 1));
         snprintf(c.icd10, sizeof c.icd10, "%s", skip_spaces(comma2 + 1));
+        snprintf(c.pathway, sizeof c.pathway, "%s", pathway);
         trim_end(c.name);
         trim_end(c.icd10);
+        trim_end(c.pathway);
         if (c.name[0] == '\0') continue;
         table[count++] = c;
     }
@@ -91,4 +108,9 @@ const Condition *conditions_random(int severity)
         if (table[i].severity == severity && k-- == 0) return &table[i];
     }
     return &fallback[severity - 1];   // not reached
+}
+
+const Condition *conditions_rescue(void)
+{
+    return &rescues[GetRandomValue(0, RESCUE_COUNT - 1)];
 }

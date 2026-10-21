@@ -22,9 +22,11 @@
 // see into every room from above. The outside walls stay full height except
 // the ones between the camera and the building.
 //
-// The people here are dummies: they aren't part of the simulation, they just
-// make the building feel lived in. Like view3d.c, this file only reads the
-// simulation and never changes it.
+// The patients in X-ray, MRI, bloods, theatre and the ward are real: they come
+// from the simulation's rooms (sim->rooms), lying on the table or in a bed, or
+// queuing outside. The staff, the babies and the visitors are dummies that
+// just make the building feel lived in. Like view3d.c, this file only reads
+// the simulation and never changes it.
 
 #include <math.h>
 #include <stddef.h>
@@ -69,6 +71,10 @@ static const Room ROOMS[ROOM_COUNT + 1] = {
     { "ADMIN OFFICE",     WEST_X,   4.0f, WING_X, SOUTH_Z, {  90, 100, 120, 255 }, 12.0f },
 };
 
+// The ward's four beds, along its left wall (one for each place on the ward)
+#define WARD_BED_X -15.15f
+static const float WARD_BED_Z[4] = { -11.9f, -9.9f, -7.9f, -5.9f };
+
 // ---- Colours for this file ----
 #define C_GOWN      (Color){ 170, 200, 230, 255 }   // ward patients' gowns
 #define C_SCRUBS    (Color){  60, 150, 130, 255 }   // theatre scrubs
@@ -103,6 +109,8 @@ static RenderTexture2D viewingSign, xraySign, metalSign, scaleScreen;
 
 static bool  night;            // night shift: rooms dim, lamps on
 static float now;              // seconds, for the small movements
+static int   clockHour, clockMinute;   // the shift time, for the ward clock
+static const Sim *simNow;      // the simulation being drawn this frame
 static bool  lowNorth, lowWest, lowEast, lowSouth;   // outside walls facing the camera
 
 // Monitors only look at a patient's severity, which sets the speed of the trace.
@@ -279,6 +287,116 @@ static void chair(Vector3 p, Facing f, Color c)
 }
 
 // ------------------------------------------------------------------------
+// Real patients, from the simulation's rooms
+// ------------------------------------------------------------------------
+
+static Color gown_colour(const Patient *p)
+{
+    if (p->severity == 1) return C_EMERGENCY;
+    if (p->severity == 2) return C_URGENT;
+    return C_ROUTINE;
+}
+
+// The patient in place `slot` of a room, or NULL if it's empty or they're
+// still walking there (view3d.c draws them while they walk).
+static const Patient *in_room(RoomType r, int slot)
+{
+    if (simNow == NULL || slot >= simNow->rooms[r].capacity) return NULL;
+    const Patient *p = simNow->rooms[r].in[slot];
+    if (p == NULL || view3d_patient_walking(p->id)) return NULL;
+    return p;
+}
+
+// Where the k-th patient queuing for a room waits, which way they face, and
+// whether they sit (on the corridor bench, or the chairs in bloods).
+static Vector3 queue_spot(RoomType r, int k, Facing *f, bool *seated)
+{
+    *f = FACE_NORTH;
+    *seated = false;
+    switch (r) {
+        case ROOM_XRAY:    return v3(-5.0f + 0.65f * k, 0, -5.75f);     // in the corridor by the door
+        case ROOM_MRI:     return v3(-1.3f + 0.65f * k, 0, -5.75f);
+        case ROOM_THEATRE: return v3( 4.6f + 0.65f * k, 0, -5.75f);
+        case ROOM_WARD:
+            if (k < 3) { *seated = true; *f = FACE_EAST; return v3(-9.35f, 0, -5.0f + 0.5f * k); }   // the bench
+            return v3(-8.85f, 0, -3.6f + 0.6f * (k - 3));
+        default:       // bloods: the two chairs inside the door, then standing
+            *f = FACE_NORTH;
+            if (k < 2) { *seated = true; return v3(k == 0 ? -12.2f : -12.9f, 0, -0.75f); }
+            return v3(-11.5f - 0.6f * (k - 2), 0, -1.1f);
+    }
+}
+
+// Where a patient walks to for place `slot` in a room (they're then drawn
+// lying on the table, in the bed, or in the chair).
+static Vector3 slot_stand(RoomType r, int slot)
+{
+    switch (r) {
+        case ROOM_XRAY:    return v3(-5.6f, 0, -9.45f);
+        case ROOM_MRI:     return v3(-0.05f, 0, -8.6f);
+        case ROOM_THEATRE: return v3( 4.3f, 0, -9.0f);
+        case ROOM_BLOODS:  return slot == 0 ? v3(-14.5f, 0, -2.0f) : v3(-11.2f, 0, -1.25f);
+        default:           return v3(-13.7f, 0, WARD_BED_Z[slot] + 0.7f);
+    }
+}
+
+int rooms3d_path(int room, int place, Vector3 *pts, int max)
+{
+    RoomType r = (RoomType)room;
+    int n = 0;
+    #define ADD(p) do { if (n < max) pts[n++] = (p); } while (0)
+    bool queue = place < 0;
+    Facing f; bool seated;
+    Vector3 end = queue ? queue_spot(r, -1 - place, &f, &seated) : slot_stand(r, place);
+
+    switch (r) {
+        case ROOM_XRAY: case ROOM_MRI: case ROOM_THEATRE: {
+            float doorX = (r == ROOM_XRAY) ? -6.0f : (r == ROOM_MRI) ? -2.3f : 3.6f;
+            ADD(v3(-8.9f, 0, -5.95f));                 // corner of the corridor
+            ADD(v3(doorX, 0, -5.95f));                 // outside the door
+            if (!queue) ADD(v3(doorX, 0, -7.4f));      // just inside
+            break;
+        }
+        case ROOM_WARD:
+            ADD(v3(-8.9f, 0, -5.95f));
+            if (!queue) {
+                ADD(v3(-10.6f, 0, -5.95f));            // through the ward door
+                ADD(v3(-12.9f, 0, -5.95f));
+                ADD(v3(-12.9f, 0, end.z));             // along to the bed
+            }
+            break;
+        default:                                       // bloods
+            ADD(v3(-8.9f, 0, -2.45f));
+            ADD(v3(-10.6f, 0, -2.45f));
+            break;
+    }
+    ADD(end);
+    #undef ADD
+    return n;
+}
+
+Vector3 rooms3d_junction(void)
+{
+    return v3(-8.9f, 0, -0.9f);
+}
+
+// The patients queuing for each room.
+static void draw_queues(void)
+{
+    if (simNow == NULL) return;
+    for (int r = 0; r < ROOM_TYPES; r++) {
+        int k = 0;
+        for (const Patient *p = simNow->rooms[r].queue; p != NULL && k < 5; p = p->next, k++) {
+            if (view3d_patient_walking(p->id)) continue;
+            Facing f; bool seated;
+            Vector3 s = queue_spot((RoomType)r, k, &f, &seated);
+            if (seated) seated_person(s, f, gown_colour(p), C_TROUSERS, C_HAIR, false);
+            else draw_person(s, f, (Outfit){ gown_colour(p), C_TROUSERS, false, false, false, false }, false, 0);
+        }
+    }
+}
+
+// ------------------------------------------------------------------------
 // Furniture used in more than one room
 // ------------------------------------------------------------------------
 
@@ -404,8 +522,6 @@ static void draw_shell(void)
 // 1. Ward: four beds, three patients, a visitor and a nurse doing her rounds
 // ------------------------------------------------------------------------
 
-#define WARD_BED_X -15.15f
-static const float WARD_BED_Z[4] = { -11.9f, -9.9f, -7.9f, -5.9f };
 
 static void draw_ward(void)
 {
@@ -417,10 +533,11 @@ static void draw_ward(void)
         float z = WARD_BED_Z[i];
         Vector3 p = v3(WARD_BED_X, 0, z);
         bed(p, FACE_EAST);                                                  // head against the wall
-        if (i < 3) {
-            lying_person(p, FACE_EAST, 0.61f, 0.0f, blankets[i], hair[i]);
+        const Patient *wp = in_room(ROOM_WARD, i);
+        if (wp != NULL) {
+            lying_person(p, FACE_EAST, 0.61f, 0.0f, gown_colour(wp), hair[i % 3]);
         } else {
-            lbox(p, FACE_EAST, 0, 0.66f, 0.70f, 1.0f, 0.10f, 0.40f, (Color){ 150, 190, 230, 255 }); // folded blanket
+            lbox(p, FACE_EAST, 0, 0.66f, 0.70f, 1.0f, 0.10f, 0.40f, blankets[i % 3]); // folded blanket
         }
         // Bedside locker with a jug of water
         draw_box(v3(-16.05f, 0.40f, z - 0.95f), v3(0.45f, 0.80f, 0.42f), C_WOOD);
@@ -450,10 +567,12 @@ static void draw_ward(void)
     draw_box(v3(-14.6f, 1.06f, tz - 0.1f), v3(0.30f, 0.03f, 0.40f), C_CARD);         // tray
     draw_box(v3(-14.6f, 1.10f, tz - 0.2f), v3(0.14f, 0.05f, 0.14f), (Color){ 230, 160, 80, 255 });
 
-    // A visitor sitting by bed 3
+    // A visitor sitting by bed 3, when someone is in it
     Vector3 seat = v3(-13.7f, 0, WARD_BED_Z[2] + 0.75f);
     chair(seat, FACE_NORTH, C_CHAIR);
-    seated_person(seat, FACE_NORTH, (Color){ 200, 120, 60, 255 }, C_TROUSERS, C_RED_HAIR, false);
+    if (in_room(ROOM_WARD, 2) != NULL) {
+        seated_person(seat, FACE_NORTH, (Color){ 200, 120, 60, 255 }, C_TROUSERS, C_RED_HAIR, false);
+    }
 
     // The nurse walks from bed to bed: 3.5 seconds at each, 1.5 seconds walking
     const float stand = 3.5f, walk = 1.5f, x = -13.5f;
@@ -471,7 +590,7 @@ static void draw_ward(void)
     if (!lowWest) {
         for (int i = 0; i < 4; i++) window_west(WARD_BED_Z[i] - 0.55f, WARD_BED_Z[i] + 0.55f);
     }
-    if (!lowNorth) draw_clock(-12.6f, 1.95f, NORTH_Z + 0.12f, 10, 10);
+    if (!lowNorth) draw_clock(-12.6f, 1.95f, NORTH_Z + 0.12f, clockHour, clockMinute);  // the shift time
     hanging_sign(WARD, -13.1f, -4.75f);
 }
 
@@ -489,8 +608,11 @@ static void draw_xray(void)
     shadow(tx, tz, 2.4f, 1.0f);
     draw_box(v3(tx, 0.32f, tz), v3(0.90f, 0.64f, 0.50f), C_MACHINE);                 // pedestal
     draw_box(v3(tx, 0.70f, tz), v3(2.30f, 0.10f, 0.85f), (Color){ 238, 232, 214, 255 }); // table top
-    lying_person(v3(tx, 0, tz), FACE_EAST, 0.75f, 0.0f, (Color){ 150, 180, 220, 255 }, C_HAIR);
-    draw_box(v3(tx + 0.2f, 0.98f, tz), v3(0.46f, 0.04f, 0.62f), C_NAVY);           // lead apron over them
+    const Patient *xp = in_room(ROOM_XRAY, 0);
+    if (xp != NULL) {
+        lying_person(v3(tx, 0, tz), FACE_EAST, 0.75f, 0.0f, gown_colour(xp), C_HAIR);
+        draw_box(v3(tx + 0.2f, 0.98f, tz), v3(0.46f, 0.04f, 0.62f), C_NAVY);       // lead apron over them
+    }
 
     // Ceiling rails, and the tube hanging from them, drifting along the table
     float cx = tx + 0.4f * sinf(now * 0.4f);
@@ -580,12 +702,14 @@ static void draw_mri(void)
     draw_lit_box(v3(MRI_X + 0.7f, 2.05f, front + 0.03f), v3(0.18f, 0.06f, 0.02f), (Color){ 90, 220, 140, 255 });
 
     // The table slides in and out of the tunnel, with the patient on it
-    float slide = 0.5f - 0.5f * cosf(now * 0.3f);                               // 0 out .. 1 in
+    // (it stays out when nobody is being scanned)
+    const Patient *mp = in_room(ROOM_MRI, 0);
+    float slide = mp ? 0.5f - 0.5f * cosf(now * 0.3f) : 0.0f;                  // 0 out .. 1 in
     float tz = -9.2f - slide * 1.3f;
     draw_box(v3(MRI_X, 0.34f, -9.3f), v3(0.70f, 0.68f, 1.40f), C_MACHINE);          // base
     draw_box(v3(MRI_X, 0.76f, tz), v3(0.78f, 0.10f, 2.40f), (Color){ 238, 232, 214, 255 });
     Vector3 pt = v3(MRI_X, 0, tz);
-    lying_person(pt, FACE_SOUTH, 0.81f, -0.1f, (Color){ 150, 180, 220, 255 }, C_HAIR);
+    if (mp != NULL) lying_person(pt, FACE_SOUTH, 0.81f, -0.1f, gown_colour(mp), C_HAIR);
     lbox(pt, FACE_SOUTH, -0.22f, 1.10f, -0.80f, 0.05f, 0.34f, 0.40f, C_MACHINE);   // head coil
     lbox(pt, FACE_SOUTH,  0.22f, 1.10f, -0.80f, 0.05f, 0.34f, 0.40f, C_MACHINE);
     lbox(pt, FACE_SOUTH,  0.00f, 1.26f, -0.80f, 0.48f, 0.05f, 0.40f, C_MACHINE);
@@ -636,9 +760,12 @@ static void draw_bloods(void)
     lbox(c, FACE_EAST, 0, 0.95f, -0.36f, 0.70f, 0.95f, 0.14f, seat);            // back
     lbox(c, FACE_EAST, -0.42f, 0.66f, 0.15f, 0.14f, 0.07f, 0.80f, seat);        // arm rests,
     lbox(c, FACE_EAST,  0.42f, 0.66f, 0.15f, 0.14f, 0.07f, 0.80f, seat);        // reaching forwards
-    seated_person(c, FACE_EAST, (Color){ 120, 160, 110, 255 }, C_TROUSERS, C_HAIR, false);
-    lbox(c, FACE_EAST, 0.42f, 0.73f, 0.35f, 0.11f, 0.08f, 0.40f, C_SKIN);       // arm out on the rest
-    lbox(c, FACE_EAST, 0.42f, 0.78f, 0.25f, 0.12f, 0.03f, 0.10f, (Color){ 200, 60, 60, 255 }); // tourniquet
+    const Patient *bp = in_room(ROOM_BLOODS, 0);
+    if (bp != NULL) {
+        seated_person(c, FACE_EAST, gown_colour(bp), C_TROUSERS, C_HAIR, false);
+        lbox(c, FACE_EAST, 0.42f, 0.73f, 0.35f, 0.11f, 0.08f, 0.40f, C_SKIN);   // arm out on the rest
+        lbox(c, FACE_EAST, 0.42f, 0.78f, 0.25f, 0.12f, 0.03f, 0.10f, (Color){ 200, 60, 60, 255 }); // tourniquet
+    }
 
     // The phlebotomist, at the patient's arm
     draw_person(v3(-14.3f, 0, -3.35f), FACE_WEST, outfit(C_PHLEB, C_PHLEB, true), false, 0);
@@ -665,7 +792,8 @@ static void draw_bloods(void)
     draw_box(v3(s.x, 0.025f, s.z), v3(0.56f, 0.05f, 0.52f), (Color){ 90, 95, 105, 255 });
     draw_box(v3(s.x, 1.05f, s.z - 0.30f), v3(0.07f, 2.10f, 0.07f), C_STEEL);         // height pole
     draw_box(v3(s.x, 1.64f, s.z - 0.16f), v3(0.06f, 0.03f, 0.30f), C_STEEL);         // head plate
-    draw_person(s, FACE_SOUTH, outfit((Color){ 200, 160, 80, 255 }, C_TROUSERS, false), false, 0);
+    const Patient *sp = in_room(ROOM_BLOODS, 1);                               // the second place: being weighed
+    if (sp != NULL) draw_person(s, FACE_SOUTH, outfit(gown_colour(sp), C_TROUSERS, false), false, 0);
     draw_box(v3(s.x + 0.62f, 0.55f, s.z), v3(0.08f, 1.10f, 0.08f), C_STEEL);         // read-out stand
     draw_box(v3(s.x + 0.62f, 1.15f, s.z), v3(0.36f, 0.20f, 0.08f), C_DARK);
     sign_facing_front(scaleScreen.texture, s.x + 0.62f, 1.15f, s.z + 0.045f, 0.30f, 0.14f);
@@ -676,11 +804,10 @@ static void draw_bloods(void)
     draw_box(v3(-12.6f, 1.02f, -4.0f), v3(0.05f, 0.20f, 0.05f), C_STEEL);            // tap
     draw_box(v3(-12.2f, 1.00f, -4.0f), v3(0.10f, 0.16f, 0.08f), (Color){ 120, 190, 230, 255 });
 
-    // Two chairs by the door; one patient waiting
+    // Two chairs by the door, for the queue (drawn in draw_queues)
     Vector3 w1 = v3(-12.2f, 0, -0.75f), w2 = v3(-12.9f, 0, -0.75f);
     chair(w1, FACE_NORTH, C_CHAIR);
     chair(w2, FACE_NORTH, C_CHAIR);
-    seated_person(w1, FACE_NORTH, (Color){ 90, 120, 170, 255 }, C_TROUSERS, C_GREY_HAIR, false);
     yellow_bin(-16.1f, -0.6f, 0.55f);
 
     hanging_sign(BLOODS, -13.6f, -0.65f);
@@ -711,13 +838,15 @@ static void draw_theatre(void)
     draw_box(v3(tx, 0.45f, tz), v3(0.40f, 0.80f, 0.60f), C_STEEL);
     draw_box(v3(tx, 0.88f, tz), v3(0.70f, 0.10f, 2.10f), (Color){ 60, 66, 78, 255 });
     Vector3 p = v3(tx, 0, tz);
-    lying_person(p, FACE_SOUTH, 0.93f, 0.0f, C_SCRUBS, C_HAIR);
     Color drape = { 50, 130, 115, 255 };
-    lbox(p, FACE_SOUTH, 0, 1.12f, 0.25f, 0.92f, 0.05f, 1.55f, drape);
-    lbox(p, FACE_SOUTH, -0.45f, 0.86f, 0.25f, 0.03f, 0.50f, 1.55f, drape);           // hanging over the sides
-    lbox(p, FACE_SOUTH,  0.45f, 0.86f, 0.25f, 0.03f, 0.50f, 1.55f, drape);
-    lbox(p, FACE_SOUTH, 0, 1.40f, -0.55f, 1.00f, 0.55f, 0.03f, drape);               // screen at the head end
-    lbox(p, FACE_SOUTH, 0, 1.18f, -0.70f, 0.34f, 0.06f, 0.33f, C_SCRUBCAP);          // patient's cap
+    if (in_room(ROOM_THEATRE, 0) != NULL) {
+        lying_person(p, FACE_SOUTH, 0.93f, 0.0f, C_SCRUBS, C_HAIR);
+        lbox(p, FACE_SOUTH, 0, 1.12f, 0.25f, 0.92f, 0.05f, 1.55f, drape);
+        lbox(p, FACE_SOUTH, -0.45f, 0.86f, 0.25f, 0.03f, 0.50f, 1.55f, drape);       // hanging over the sides
+        lbox(p, FACE_SOUTH,  0.45f, 0.86f, 0.25f, 0.03f, 0.50f, 1.55f, drape);
+        lbox(p, FACE_SOUTH, 0, 1.40f, -0.55f, 1.00f, 0.55f, 0.03f, drape);           // screen at the head end
+        lbox(p, FACE_SOUTH, 0, 1.18f, -0.70f, 0.34f, 0.06f, 0.33f, C_SCRUBCAP);      // patient's cap
+    }
 
     // Overhead lights on arms from the ceiling
     draw_box(v3(tx, 2.80f, tz), v3(0.30f, 0.10f, 0.30f), C_STEEL);
@@ -982,6 +1111,8 @@ void rooms3d_draw(const Sim *sim, Vector3 camPos, Vector3 camTarget)
 {
     night = (sim->shift == SHIFT_NIGHT);
     now = (float)GetTime();
+    simNow = sim;
+    sim_time_of_day(sim, &clockHour, &clockMinute);
 
     // Outside walls facing the camera are drawn low, like A&E's
     float lx = camPos.x - camTarget.x, lz = camPos.z - camTarget.z;
@@ -1000,6 +1131,7 @@ void rooms3d_draw(const Sim *sim, Vector3 camPos, Vector3 camTarget)
     draw_theatre();
     draw_nursery();
     draw_admin();
+    draw_queues();
 }
 
 void rooms3d_draw_glass(void)
