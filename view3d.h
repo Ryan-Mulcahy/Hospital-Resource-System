@@ -10,7 +10,8 @@
 
 // Camera controls: drag with the left mouse button to turn, drag with the
 // right button to move, scroll to zoom. Number keys fly to a room: 0 A&E,
-// 1-7 the other rooms (see rooms3d.h), 8 the whole hospital.
+// 1-7 the other rooms (see rooms3d.h), 8 the whole hospital, 9 the helipad
+// and ambulance bays.
 // Call once per frame while the 3D view is showing, before drawing.
 void view3d_update_camera(void);
 

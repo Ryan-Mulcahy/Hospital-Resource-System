@@ -25,5 +25,10 @@
 // Draw one complete frame. Call between BeginDrawing() and EndDrawing().
 void draw_frame(const Sim *sim, float speed, bool paused);
 
-#endif
+// A banner for a few seconds after a helicopter rescue arrives, e.g.
+// "COAST GUARD RESCUE INBOUND" (each service has its own message and colour),
+// centred on centreX with its top at y. Both views use it.
+// Returns true on the frame a new rescue is first seen.
+bool draw_rescue_banner(const Sim *sim, int centreX, int y);
 
+#endif

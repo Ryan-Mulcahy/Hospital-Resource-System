@@ -1,6 +1,16 @@
-   severity,condition,icd10
-   1,Cardiac arrest,I46.9
-   1,Sepsis,A41.9
-   2,Chest pain,R07.9
-   2,Asthma attack,J45.901
-   3,Ankle sprain,S93.409A
+severity,condition,icd10,pathway
+1,Cardiac arrest,I46.9,bloods+ward
+1,Sepsis,A41.9,bloods+ward
+1,Stroke,I63.9,mri+ward
+1,Burst appendix,K35.2,theatre+ward
+1,Head injury (car crash),S06.9,mri+theatre
+2,Chest pain,R07.9,bloods
+2,Asthma attack,J45.901,home
+2,Broken wrist,S62.90,xray
+2,Kidney stone,N20.0,xray
+2,Severe headache,R51,home
+3,Ankle sprain,S93.409A,xray
+3,Cut hand,S61.419A,home
+3,Ear infection,H66.90,home
+3,Back pain,M54.5,home
+3,Dizziness,R42,home

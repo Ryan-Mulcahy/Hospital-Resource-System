@@ -22,6 +22,9 @@
 #define NIGHT_GAP_MAX 40
 // A nurse assesses every patient first, then decides if a doctor is needed.
 #define ASSESS_TIME       1.0f   // seconds a nurse takes to assess a patient
+
+// Helicopter rescues: 1 or 2 a shift. Rescued patients go to the front of the queue.
+#define RESCUE_CHANCE_SECOND 50  // % chance of a second rescue later in the shift
  
  
 // A day is two 12-hour shifts: the day shift from 07:00 to 19:00, then the
@@ -32,6 +35,21 @@
 #define DAY_START_HOUR 7
  
 typedef enum { SHIFT_DAY, SHIFT_NIGHT } ShiftType;
+
+// The rooms patients can be sent to after A&E. Each takes a set number of
+// patients at once for a set time; anyone else waits in that room's queue.
+typedef enum { ROOM_XRAY, ROOM_MRI, ROOM_BLOODS, ROOM_THEATRE, ROOM_WARD, ROOM_TYPES } RoomType;
+#define ROOM_NONE      -1
+#define ROOM_SLOTS_MAX  4        // the most patients any room holds at once
+
+typedef struct {
+    const char *name;        // e.g. "X-ray"
+    int capacity;            // patients at once
+    float duration;          // simulated seconds each patient spends there
+    Patient *in[ROOM_SLOTS_MAX]; // who is in each place (NULL = free)
+    Patient *queue;          // waiting for this room, most urgent first
+    int queueCount;
+} SimRoom;
  
 typedef struct {
     Patient *occupant;       // NULL when the bed is free
@@ -55,6 +73,9 @@ typedef struct {
     int severity;                    // 1 = emergency, 2 = urgent, 3 = routine
     const Condition *condition;      // points into the conditions table (lives all run)
     char treatedBy[TREATED_BY_LEN];  // e.g. "Nurse Aoife Byrne", or "Nurse 2" before names
+    char sentTo[PATHWAY_LEN];        // rooms after A&E, e.g. "X-ray", or "Home"
+    bool rescue;                     // came in by helicopter
+    int rescueService;               // ...and which service brought them
     bool sawDoctor;                  // true if a nurse sent them to a doctor
     float arrivalTime;               // clock time they arrived
     float wait;                      // seconds waiting for a bed
@@ -73,7 +94,9 @@ typedef struct {
     float nurseBusyTime;    // nurse-seconds spent treating
     float doctorBusyTime;    // doctor-seconds spent treating
     int sawDoctor;           // patients a nurse sent to a doctor
- 
+    int sentTo[ROOM_TYPES];  // patients sent to each room after A&E
+    int leftHospital;        // patients who finished in the rooms and went home
+    int rescues;             // patients brought in by helicopter
 } ShiftStats;
  
 typedef struct {
@@ -84,7 +107,10 @@ typedef struct {
     Doctor doctors[DOCTOR_COUNT];
     float clock;             // simulated seconds since 07:00 at the start of the day
     float nextArrival;       // clock time of the next random arrival
+    float nextRescue;        // clock time of the next helicopter rescue (< 0: none)
     int nextId;
+
+    SimRoom rooms[ROOM_TYPES];   // X-ray, MRI, bloods, theatre and the ward
  
     int day;                 // 1 for the first day, 2 for the next, ...
     ShiftType shift;         // which shift is on
@@ -110,6 +136,18 @@ void sim_start_night(Sim *sim);
  
 void sim_update(Sim *sim, float dt);
 void sim_add_patient(Sim *sim, int severity);
+
+// A patient flown in by helicopter (coast guard, search and rescue or the fire
+// service, depending on what happened to them): an emergency who goes
+// straight to the front of the queue. Happens by itself 1 or 2 times a shift;
+// the H key adds one too.
+void sim_add_rescue(Sim *sim);
+
+// Patients in a room or waiting for one, across every room.
+int sim_patients_in_rooms(const Sim *sim);
+
+// The rooms a patient is going to, as text, e.g. "Theatre, Ward" or "Home".
+void sim_route_text(const Patient *p, char *out, int size);
 // Free every patient and the treatment log.
 void sim_free(Sim *sim);
  

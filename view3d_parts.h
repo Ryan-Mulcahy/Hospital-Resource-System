@@ -71,4 +71,8 @@ void draw_wall(Vector3 centre, float lengthX, float lengthZ, float height, bool 
 void draw_clock(float x, float y, float z, int hour, int minute);
 void draw_plant(float x, float z);
 
+// True while a patient is walking somewhere (view3d.c draws them walking, so
+// the place they're heading for is drawn empty until they get there).
+bool view3d_patient_walking(int id);
+
 #endif
