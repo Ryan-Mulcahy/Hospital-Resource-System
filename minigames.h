@@ -1,4 +1,5 @@
-// minigames.h - the mini-game menu, and the three games together.
+// minigames.h - the mini-game menu, the eight games together, and showing
+// which patients are ready for a game.
 //
 // Press G during a shift for the menu of eight games: the operation, "Shock!"
 // (the defibrillator), "Find the vein" (bloods), "Hold still" (X-ray and CT),
@@ -53,9 +54,44 @@ void minigames_update(Sim *sim);
 // Call between BeginDrawing() and EndDrawing(), not inside BeginMode2D().
 void minigames_draw(const Sim *sim, Camera2D fit);
 
-// The banners for patients who are ready for a game ("SURGERY READY..."),
-// centred on centreX with their top at y. In a row (short, side by side: the
-// 2D view, where there's little room) or one under another (the 3D view).
-void minigames_draw_offers(int centreX, int y, bool row);
+// ---- Showing which patients are ready for a game ----
+// Rather than banners in the middle of the screen: a little table in a
+// corner listing them all, a badge on the room's (or bed's) card in the 2D
+// view, and a speech bubble over the room in the 3D view.
+
+// One game that's ready for a real patient.
+typedef struct {
+    MiniGame game;
+    int patientId;
+} MiniOffer;
+
+// The games ready for a real patient now (Triage and Blue lights are left
+// out: they're always there). Fills `out` (up to `max`) and returns how many.
+int minigames_offers(MiniOffer *out, int max);
+
+// Where a patient is: an A&E bed (*bed), or a place in a room (*room and
+// *slot). The others are set to -1. False if they're in neither (a rescue
+// still in the air, say).
+bool minigames_patient_place(const Sim *sim, int id, int *room, int *slot, int *bed);
+
+// A game's colour.
+Color minigames_colour(MiniGame g);
+
+// A tiny picture for a game (a scalpel, a lightning bolt...), about 14
+// pixels across, centred on (cx, cy).
+void minigames_draw_mini_icon(MiniGame g, float cx, float cy, Color c);
+
+// A round badge with the game's picture, pulsing gently: for a card in the 2D view.
+void minigames_draw_badge(MiniGame g, float cx, float cy);
+
+// A speech bubble ("SURGERY 38  O") whose tail points down at `tip`: for a
+// room in the 3D view. The bubble slides left if needed so its right edge
+// stays left of maxRight (clear of the panels on the right).
+void minigames_draw_bubble(MiniGame g, int patientId, Vector2 tip, float maxRight);
+
+// The "GAMES READY" table, top-left corner at (x, y), `w` wide, with the
+// games in `columns` columns, in these colours. Returns its height (0 if not
+// drawn, while the menu or a game is on screen).
+int minigames_draw_table(float x, float y, float w, int columns, Color bg, Color ink, Color muted);
 
 #endif

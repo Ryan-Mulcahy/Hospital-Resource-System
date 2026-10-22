@@ -221,10 +221,7 @@ int main(void)
             else if (sim.shiftOver && viewingLog) draw_patient_log(&sim, logScroll);
             else if (sim.shiftOver && viewingKit) draw_equipment_report(&sim);
             else if (sim.shiftOver)          draw_shift_report(&sim);
-            else {
-                draw_frame(&sim, speed, paused);
-                minigames_draw_offers(SCREEN_W / 2, SCREEN_H - 73, true);   // "SURGERY READY: 38 (O)", ... under the staff
-            }
+            else draw_frame(&sim, speed, paused);   // (with the games ready to play in a corner)
             EndMode2D();
         }
         EndDrawing();

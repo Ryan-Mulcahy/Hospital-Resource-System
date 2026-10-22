@@ -48,7 +48,7 @@
 #include "view3d_parts.h"   // colours and helpers shared with rooms3d.c
 #include "rooms3d.h"        // the rest of the hospital
 #include "sound.h"          // the door chime, helicopter blades and rain
-#include "minigames.h"      // the "SURGERY READY" banners
+#include "minigames.h"      // the bubbles and table for games ready to play
 #include "floors3d.h"       // the floors upstairs, and the lifts
 #include "outside3d.h"      // the grounds, and the building seen from outside
 
@@ -2580,6 +2580,44 @@ static void label(const char *text, Vector3 at, Camera3D cam, int size, Color fg
     DrawText(text, (int)s.x - w / 2, (int)s.y - size / 2, size, fg);
 }
 
+// A speech bubble over each room (or bed, or the helipad) where a patient is
+// ready for a mini game, if it's on the floor being looked at and in view.
+static void game_bubbles(const Sim *sim, Camera3D cam)
+{
+    if (minigames_active()) return;
+    MiniOffer offers[MINIGAME_COUNT];
+    int n = minigames_offers(offers, MINIGAME_COUNT);
+    Vector3 fwd = { cam.target.x - cam.position.x, cam.target.y - cam.position.y, cam.target.z - cam.position.z };
+    for (int i = 0; i < n; i++) {
+        Vector3 at;
+        int room, slot, bed;
+        if (offers[i].game == MINIGAME_LANDING) {                   // over the helipad
+            if (viewFloor != 0 && viewFloor < VIEW_OUTSIDE) continue;
+            at = v3(HELI_X, 3.2f, HELI_Z);
+        } else {
+            if (!minigames_patient_place(sim, offers[i].patientId, &room, &slot, &bed)) continue;
+            if (bed >= 0) {                                         // over their A&E bed
+                if (viewFloor != 0) continue;
+                at = bed_point(bed, 0, 2.2f, 0.2f);
+            } else {                                                // over their place in the room
+                if (sim_room_floor(room) != viewFloor) continue;
+                Vector3 pts[16];
+                int k = rooms3d_path(room, slot, pts, 16);
+                if (k == 0) continue;
+                at = pts[k - 1];
+                at.y += 2.3f;
+            }
+        }
+        float ahead = (at.x - cam.position.x) * fwd.x + (at.y - cam.position.y) * fwd.y + (at.z - cam.position.z) * fwd.z;
+        if (ahead <= 0.0f) continue;                                // behind the camera
+        Vector2 tip = to_hud(at, cam);
+        if (tip.x < 0 || tip.x > hudW || tip.y < 30 || tip.y > hudH) continue;          // off the screen
+        bool besidePanels = (tip.y < 520);                         // the panels down the right-hand side
+        if (besidePanels && tip.x > hudW - 236) continue;           // under them: the table still lists it
+        minigames_draw_bubble(offers[i].game, offers[i].patientId, tip, besidePanels ? hudW - 240 : hudW - 8);
+    }
+}
+
 static void progress_bar(Vector3 at, Camera3D cam, float done, Color fill)
 {
     Vector2 s = to_hud(at, cam);
@@ -3142,6 +3180,9 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     hud(sim, speed, paused);
     if (hoverBed != -1 && !IsMouseButtonDown(MOUSE_BUTTON_LEFT)) bed_tooltip(sim, hoverBed);
     draw_rescue_banner(sim, (int)hudW / 2, 72);     // e.g. "COAST GUARD RESCUE INBOUND"
-    minigames_draw_offers((int)hudW / 2, 110, false);   // "SURGERY READY - press O", ... one under another
+    game_bubbles(sim, cam);                         // "SURGERY 38  O" over the rooms where a game is ready
+    bool night = (sim->shift == SHIFT_NIGHT);
+    minigames_draw_table(hudW - 230, 388, 216, 1, night ? (Color){ 30, 38, 56, 230 } : (Color){ 255, 255, 255, 230 },
+                         night ? (Color){ 225, 232, 245, 255 } : C_INK, night ? (Color){ 150, 165, 190, 255 } : C_MUTED);
     EndMode2D();
 }

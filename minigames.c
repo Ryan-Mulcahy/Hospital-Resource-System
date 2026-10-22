@@ -23,34 +23,32 @@
 static bool menuOpen = false;
 static bool fromMenu = false;    // the game being played was picked from the menu (go back to it after)
 
-// ---- Each game's details, for the menu and the banners ----
+// ---- Each game's details, for the menu, the table and the bubbles ----
 typedef struct {
     const char *name;
     const char *lines[3];        // what it is, on the menu card
-    const char *ready;           // the banner: "SURGERY READY"
-    const char *keys;            // the banner: how to start it
-    const char *rowName;         // ...and in short, for the row of banners in the 2D view
-    const char *shortKeys;
+    const char *rowName;         // its short name in the table and the bubbles, e.g. "SURGERY"
+    const char *shortKeys;       // ...and the keys that start it, e.g. "O" or "G 2"
     Color colour;
 } GameInfo;
 
 static const GameInfo INFO[MINIGAME_COUNT] = {
     { "Operation", { "Take the item out along", "the channel without", "touching the edge." },
-      "SURGERY READY", "press O to operate", "SURGERY", "O", { 40, 140, 110, 255 } },
+      "SURGERY", "O", { 40, 140, 110, 255 } },
     { "Shock!", { "Charge, then shock as", "the spike passes the", "zone. Three good shocks." },
-      "DEFIB NEEDED", "press G, then 2", "DEFIB", "G 2", { 190, 60, 50, 255 } },
+      "DEFIB", "G 2", { 190, 60, 50, 255 } },
     { "Find the vein", { "Feel for the vein, put", "the needle in, and stop", "when blood shows." },
-      "BLOODS", "press G, then 3", "BLOODS", "G 3", { 60, 100, 190, 255 } },
+      "BLOODS", "G 3", { 60, 100, 190, 255 } },
     { "Hold still", { "Line up the X-ray or CT", "and take the image when", "the patient is still." },
-      "SCAN READY", "press G, then 4", "SCAN", "G 4", { 70, 130, 170, 255 } },
+      "SCAN", "G 4", { 70, 130, 170, 255 } },
     { "Triage call", { "Three new arrivals: drag", "each to emergency, urgent", "or routine." },
-      NULL, NULL, NULL, NULL, { 80, 90, 160, 255 } },
+      NULL, NULL, { 80, 90, 160, 255 } },
     { "Pharmacy rush", { "Click the right pills", "into the bag before the", "clock runs out." },
-      "PRESCRIPTION", "press G, then 6", "PHARMACY", "G 6", { 60, 140, 80, 255 } },
+      "PHARMACY", "G 6", { 60, 140, 80, 255 } },
     { "Blue lights", { "Drive the ambulance in,", "weaving through traffic.", "Don't clip the cars!" },
-      NULL, NULL, NULL, NULL, { 50, 70, 170, 255 } },
+      NULL, NULL, { 50, 70, 170, 255 } },
     { "Touchdown", { "Land the rescue", "helicopter on the pad", "in a gusty wind." },
-      "HELI INBOUND", "press G, then 8", "HELI", "G 8", { 200, 110, 40, 255 } },
+      "HELI", "G 8", { 200, 110, 40, 255 } },
 };
 
 // The real patient a game could be played for now, or 0 (a practice round).
@@ -271,33 +269,131 @@ void minigames_draw(const Sim *sim, Camera2D fit)
     EndMode2D();
 }
 
-void minigames_draw_offers(int centreX, int y, bool row)
+// ---- What's ready, and where ----
+
+int minigames_offers(MiniOffer *out, int max)
 {
-    if (minigames_active()) return;
-    float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 5.0f);
-    char texts[MINIGAME_COUNT][80];
-    Color colours[MINIGAME_COUNT];
     int n = 0;
-    for (int i = 0; i < MINIGAME_COUNT; i++) {
+    for (int i = 0; i < MINIGAME_COUNT && n < max; i++) {
         int id = offer_for((MiniGame)i);
-        if (id == 0 || INFO[i].ready == NULL) continue;
-        // In a row they're short: "SURGERY 38 (O)"; in a column, the full text
-        if (row) snprintf(texts[n], sizeof texts[n], "%s %d (%s)", INFO[i].rowName, id, INFO[i].shortKeys);
-        else     snprintf(texts[n], sizeof texts[n], "%s: patient %d   -   %s", INFO[i].ready, id, INFO[i].keys);
-        colours[n] = INFO[i].colour;
-        colours[n].a = (unsigned char)(200 + 55 * pulse);
+        if (id == 0 || INFO[i].rowName == NULL) continue;
+        out[n].game = (MiniGame)i;
+        out[n].patientId = id;
         n++;
     }
-    int size = row ? 14 : 18, height = row ? 24 : 30, gap = 8;
-    int total = 0;
-    for (int i = 0; i < n; i++) total += MeasureText(texts[i], size) + (row ? 20 : 30) + (i > 0 ? gap : 0);
-    int x = centreX - total / 2;
-    for (int i = 0; i < n; i++) {
-        int w = MeasureText(texts[i], size) + (row ? 20 : 30);
-        int bx = row ? x : centreX - w / 2;
-        DrawRectangleRounded((Rectangle){ (float)bx, (float)y, (float)w, (float)height }, 0.5f, 8, colours[i]);
-        DrawText(texts[i], bx + w / 2 - MeasureText(texts[i], size) / 2, y + (height - size) / 2, size, WHITE);
-        if (row) x += w + gap;
-        else     y += height + 6;
+    return n;
+}
+
+bool minigames_patient_place(const Sim *sim, int id, int *room, int *slot, int *bed)
+{
+    *room = -1; *slot = -1; *bed = -1;
+    for (int b = 0; b < BED_COUNT; b++) {
+        const Patient *p = sim->beds[b].occupant;
+        if (p != NULL && p->id == id) { *bed = b; return true; }
     }
+    for (int r = 0; r < ROOM_TYPES; r++) {
+        for (int s = 0; s < sim->rooms[r].capacity; s++) {
+            const Patient *p = sim->rooms[r].in[s];
+            if (p != NULL && p->id == id) { *room = r; *slot = s; return true; }
+        }
+    }
+    return false;                                    // in the air, or gone
+}
+
+Color minigames_colour(MiniGame g) { return INFO[g].colour; }
+
+// A tiny picture for each game, about 14 pixels across, in white
+void minigames_draw_mini_icon(MiniGame g, float cx, float cy, Color c)
+{
+    switch (g) {
+    case MINIGAME_OPERATION:                         // a scalpel
+        DrawLineEx((Vector2){ cx - 6, cy + 6 }, (Vector2){ cx + 1, cy - 1 }, 3, c);
+        DrawTriangle((Vector2){ cx + 1, cy - 1 }, (Vector2){ cx + 7, cy - 7 }, (Vector2){ cx + 3, cy + 1 }, c);
+        DrawTriangle((Vector2){ cx + 1, cy - 1 }, (Vector2){ cx + 3, cy + 1 }, (Vector2){ cx + 7, cy - 7 }, c);
+        break;
+    case MINIGAME_SHOCK:                             // a lightning bolt
+        DrawLineEx((Vector2){ cx + 3, cy - 7 }, (Vector2){ cx - 3, cy + 1 }, 3, c);
+        DrawLineEx((Vector2){ cx - 3, cy + 1 }, (Vector2){ cx + 3, cy }, 3, c);
+        DrawLineEx((Vector2){ cx + 3, cy }, (Vector2){ cx - 3, cy + 7 }, 3, c);
+        break;
+    case MINIGAME_VEIN:                              // a drop of blood
+        DrawCircleV((Vector2){ cx, cy + 2 }, 5, c);
+        DrawTriangle((Vector2){ cx, cy - 7 }, (Vector2){ cx - 5, cy + 1 }, (Vector2){ cx + 5, cy + 1 }, c);
+        break;
+    case MINIGAME_SCAN:                              // the image frame
+        DrawRectangleLinesEx((Rectangle){ cx - 6, cy - 6, 12, 12 }, 2, c);
+        DrawCircleV((Vector2){ cx, cy }, 2, c);
+        break;
+    case MINIGAME_PHARMACY:                          // a capsule
+        DrawRectangleRounded((Rectangle){ cx - 7, cy - 3, 14, 7 }, 1.0f, 6, c);
+        break;
+    case MINIGAME_LANDING:                           // H for the helipad
+        DrawLineEx((Vector2){ cx - 4, cy - 6 }, (Vector2){ cx - 4, cy + 6 }, 2, c);
+        DrawLineEx((Vector2){ cx + 4, cy - 6 }, (Vector2){ cx + 4, cy + 6 }, 2, c);
+        DrawLineEx((Vector2){ cx - 4, cy }, (Vector2){ cx + 4, cy }, 2, c);
+        break;
+    default:
+        DrawCircleV((Vector2){ cx, cy }, 4, c);
+        break;
+    }
+}
+
+void minigames_draw_badge(MiniGame g, float cx, float cy)
+{
+    float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 5.0f);
+    Color c = INFO[g].colour;
+    DrawCircleV((Vector2){ cx, cy }, 11 + 2 * pulse, (Color){ c.r, c.g, c.b, 80 });     // a soft glow that pulses
+    DrawCircleV((Vector2){ cx, cy }, 10, c);
+    DrawCircleLines((int)cx, (int)cy, 10, WHITE);
+    minigames_draw_mini_icon(g, cx, cy, WHITE);
+}
+
+void minigames_draw_bubble(MiniGame g, int patientId, Vector2 tip, float maxRight)
+{
+    float bob = 3.0f * sinf((float)GetTime() * 3.0f);                // floats gently up and down
+    const char *text = TextFormat("%s %d", INFO[g].rowName, patientId);
+    const char *key = INFO[g].shortKeys;
+    int tw = MeasureText(text, 12), kw = MeasureText(key, 12);
+    float w = 26 + tw + 10 + kw + 10, h = 22;
+    Rectangle r = { tip.x - w / 2, tip.y - 10 - h + bob, w, h };
+    if (r.x + w > maxRight) r.x = maxRight - w;                      // slid along to stay clear of the panels
+    if (r.x < 8) r.x = 8;
+    float tailX = fminf(fmaxf(tip.x, r.x + 10), r.x + w - 10);       // the tail leaves from inside the bubble
+    Color c = INFO[g].colour;
+    DrawTriangle((Vector2){ tailX - 6, r.y + h - 1 }, (Vector2){ tip.x, tip.y + bob }, (Vector2){ tailX + 6, r.y + h - 1 }, c);   // the tail
+    DrawRectangleRounded(r, 0.5f, 8, c);
+    DrawRectangleRoundedLines(r, 0.5f, 8, (Color){ 255, 255, 255, 180 });
+    minigames_draw_mini_icon(g, r.x + 13, r.y + h / 2, WHITE);
+    DrawText(text, (int)r.x + 24, (int)r.y + 5, 12, WHITE);
+    Rectangle k = { r.x + 26 + tw + 6, r.y + 3, kw + 8, h - 6 };      // the key to press, in a little box
+    DrawRectangleRounded(k, 0.4f, 6, (Color){ 255, 255, 255, 230 });
+    DrawText(key, (int)k.x + 4, (int)k.y + 3, 12, c);
+}
+
+int minigames_draw_table(float x, float y, float w, int columns, Color bg, Color ink, Color muted)
+{
+    if (minigames_active()) return 0;
+    MiniOffer offers[MINIGAME_COUNT];
+    int n = minigames_offers(offers, MINIGAME_COUNT);
+    int rows = (n == 0) ? 1 : (n + columns - 1) / columns;
+    float h = 20 + rows * 16 + 4;
+    DrawRectangleRounded((Rectangle){ x, y, w, h }, 0.15f, 8, bg);
+    DrawText("GAMES READY", (int)x + 10, (int)y + 5, 12, muted);
+    const char *g = "G menu";
+    DrawText(g, (int)(x + w) - 10 - MeasureText(g, 12), (int)y + 5, 12, muted);
+    if (n == 0) {
+        DrawText("Nobody ready - practice with G", (int)x + 10, (int)y + 21, 12, muted);
+        return (int)h;
+    }
+    float colW = (w - 12) / columns;
+    for (int i = 0; i < n; i++) {
+        float cx = x + 8 + (i % columns) * colW, cy = y + 20 + (i / columns) * 16;
+        Color c = INFO[offers[i].game].colour;
+        DrawCircleV((Vector2){ cx + 7, cy + 7 }, 7, c);
+        minigames_draw_mini_icon(offers[i].game, cx + 7, cy + 7, WHITE);
+        DrawText(TextFormat("%s %d", INFO[offers[i].game].rowName, offers[i].patientId), (int)cx + 18, (int)cy + 1, 12, ink);
+        const char *k = INFO[offers[i].game].shortKeys;
+        DrawText(k, (int)(cx + colW) - 8 - MeasureText(k, 12), (int)cy + 1, 12, c);
+    }
+    return (int)h;
 }

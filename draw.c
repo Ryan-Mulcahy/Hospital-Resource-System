@@ -6,6 +6,7 @@
 #include <math.h>
 #include "raylib.h"
 #include "draw.h"
+#include "minigames.h"        // the games ready to play
 
 // ---- Colour theme: day or night ----
 typedef struct {
@@ -93,16 +94,31 @@ Color draw_equipment_colour(int e)
 // The rooms patients go to after A&E: who is in each, and how many are
 // queuing. Two rows of seven; the small number in the corner is the floor
 // the room is on (G ground, 1 first, 2 second).
-static void draw_rooms(const Sim *sim)
+// Where each room's card is, in the two rows under the waiting room
+static Rectangle room_card(int r)
 {
     const int x0 = 25, y0 = 190, w = 76, h = 36, gap = 5, perRow = 7;
+    return (Rectangle){ (float)(x0 + (r % perRow) * (w + gap)), (float)(y0 + (r / perRow) * (h + 4)), (float)w, (float)h };
+}
 
-    DrawText("AFTER A&E", x0 + 15, y0 - 16, 14, t.muted);
+// ...and each A&E bed's card, in a row
+#define BED_CARD_X0 40
+#define BED_CARD_Y0 306
+#define BED_CARD_W  62
+#define BED_CARD_H  130
+#define BED_CARD_GAP 6
+static Rectangle bed_card(int i)
+{
+    return (Rectangle){ (float)(BED_CARD_X0 + i * (BED_CARD_W + BED_CARD_GAP)), BED_CARD_Y0, BED_CARD_W, BED_CARD_H };
+}
+
+static void draw_rooms(const Sim *sim)
+{
+    DrawText("AFTER A&E", 40, 174, 14, t.muted);
     for (int r = 0; r < ROOM_TYPES; r++) {
         const SimRoom *room = &sim->rooms[r];
-        int x = x0 + (r % perRow) * (w + gap);
-        int y = y0 + (r / perRow) * (h + 4);
-        Rectangle card = { (float)x, (float)y, (float)w, (float)h };
+        Rectangle card = room_card(r);
+        int x = (int)card.x, y = (int)card.y, w = (int)card.width, h = (int)card.height;
         DrawRectangleRounded(card, 0.25f, 8, t.card);
         DrawRectangleRoundedLines(card, 0.25f, 8, t.edge);
         int fl = sim_room_floor(r);
@@ -129,12 +145,12 @@ static void draw_rooms(const Sim *sim)
 static void draw_beds(const Sim *sim)
 {
     // 8 beds and the resus bay, narrower cards so they all fit in a row
-    const int x0 = 40, y0 = 306, w = 62, h = 130, gap = 6;
+    const int y0 = BED_CARD_Y0, w = BED_CARD_W, h = BED_CARD_H;
 
-    DrawText("WARD", x0, y0 - 30, 20, t.ink);
+    DrawText("WARD", BED_CARD_X0, y0 - 30, 20, t.ink);
 
     for (int i = 0; i < BED_COUNT; i++) {
-        int x = x0 + i * (w + gap);
+        int x = (int)bed_card(i).x;
         const Patient *p = sim->beds[i].occupant;
         bool resus = (i == RESUS_BED);
 
@@ -297,6 +313,30 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     if (paused) DrawText("PAUSED", x + 160, y, 20, t.alert);
 }
 
+// ---- Mini games ready to play ----
+// A pulsing badge on the card of each room or bed where a patient is ready
+// for a game (theatre, bloods, a bed with the defibrillator...), and the
+// "GAMES READY" table under the statistics, listing them all.
+static void draw_game_badges(const Sim *sim)
+{
+    MiniOffer offers[MINIGAME_COUNT];
+    int n = minigames_offers(offers, MINIGAME_COUNT);
+    for (int i = 0; i < n; i++) {
+        int room, slot, bed;
+        if (offers[i].game == MINIGAME_LANDING) {   // the helicopter: after "+1 coming by helicopter"
+            const char *text = TextFormat("+%d coming by helicopter", sim_inbound_count(sim));
+            minigames_draw_badge(offers[i].game, 215 + MeasureText(text, 14) + 16, 71);
+            continue;
+        }
+        if (!minigames_patient_place(sim, offers[i].patientId, &room, &slot, &bed)) continue;
+        Rectangle c = (bed >= 0) ? bed_card(bed) : room_card(room);
+        // bottom-right corner of a room card; top-right corner of a bed card
+        if (bed >= 0) minigames_draw_badge(offers[i].game, c.x + c.width - 6, c.y + 6);
+        else          minigames_draw_badge(offers[i].game, c.x + c.width - 4, c.y + c.height - 4);
+    }
+    minigames_draw_table(660, 494, 300, 2, t.card, t.ink, t.muted);
+}
+
 // ---- Helicopter rescue banner ----
 static int    rescueLastId = 0;     // highest patient id already checked
 static double rescueUntil = 0.0;
@@ -354,6 +394,7 @@ void draw_frame(const Sim *sim, float speed, bool paused)
     draw_beds(sim);
     draw_nurses(sim);
     draw_stats(sim, speed, paused);
+    draw_game_badges(sim);
     DrawText("V 3D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   G games   O operate   M mute   R reset",
              40, SCREEN_H - 40, 16, t.muted);
     draw_rescue_banner(sim, 810, 6);
