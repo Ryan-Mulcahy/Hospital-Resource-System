@@ -163,6 +163,10 @@ typedef struct {
     float nurseHelpTime;     // seconds nurses spent starting treatment while waiting for a doctor
     int surgeriesPlayed;     // operations done in the operation game (not practice)
     int complications;       // ...of those, the ones where you touched the edge or ran out of time
+    int shocksPlayed;        // the defibrillator game, on real patients
+    int shocksFailed;
+    int veinsPlayed;         // the find-the-vein game, on real patients
+    int veinsFailed;
 
     // Equipment
     float equipBusyTime[EQUIP_TYPES];    // item-seconds in use (for the % busy)
@@ -236,6 +240,17 @@ int sim_doctors_on(const Sim *sim);
 
 // Helicopter rescues on their way in (not landed yet).
 int sim_inbound_count(const Sim *sim);
+
+// The result of the defibrillator game for the patient in an A&E bed with
+// this id. Won: their heart's back in rhythm, and the rest of their treatment
+// takes half as long (so the defibrillator is free sooner). Lost: it takes
+// longer, by 30% of their whole treatment.
+void sim_shock_result(Sim *sim, int id, bool won);
+
+// The result of the find-the-vein game for the patient in bloods with this
+// id. Won: a clean first go, so the rest of their time there is halved.
+// Lost: the vein blew, so it takes longer (half as long again as usual).
+void sim_vein_result(Sim *sim, int id, bool won);
 
 // Patients in a room or waiting for one, across every room.
 int sim_patients_in_rooms(const Sim *sim);

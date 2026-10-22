@@ -13,10 +13,13 @@
 //                 and weight, operating theatre, nursery and admin office
 //   floors3d.c/.h the first and second floors in 3D (CT, ultrasound,
 //                 cardiology, ICU, pharmacy, lab, staff room; maternity,
-//                 children's ward, physio, dialysis, chapel, cafe) and the lifts
+//                 children's ward, physio, dialysis, waiting area, cafe) and the lifts
 //   outside3d.c/.h the outside of the building, the car park and the grounds
 //   sound.c/.h    sound effects, made in code (no sound files needed)
-//   opgame.c/.h   the operation mini-game (O)
+//   minigames.c/.h the mini-game menu (G), and the three games:
+//   opgame.c/.h   the operation (O)
+//   defibgame.c/.h "Shock!", the defibrillator
+//   veingame.c/.h "Find the vein", taking blood
 //   main.c        window, main loop and keyboard input
 //
 // A run covers one day: the day shift (07:00 to 19:00), then the night shift
@@ -24,7 +27,8 @@
 // in the department at 19:00 are handed over to the night shift.
 //
 // Controls: SPACE pause | UP/DOWN speed | E spawn emergency | R restart the day
-//           H helicopter rescue | O operate (the mini-game) | M sound on/off
+//           H helicopter rescue | G mini games | O operate (straight into
+//           that game) | M sound on/off
 //           F11 full screen on/off (the window has a title bar to minimise it;
 //           in full screen, F11 first)
 //           N continue to the next shift, L view patients treated,
@@ -34,8 +38,12 @@
 //           0 A&E, 1-7 rooms, 8 whole hospital, 9 helipad and ambulance bay,
 //           T cinematic tour, click a patient to follow them,
 //           F or PAGE UP/DOWN (or the floor buttons) to change floor or see the outside
-//           Operation game: click and hold the item, drag it to the tray
-//           without touching the edge. Q give up, R try again (practice)
+//           Mini games menu: 1-3 or click to play, G or BACKSPACE back.
+//           Operation: click and hold the item, drag it to the tray
+//           without touching the edge. Shock!: C charge, SPACE shock as a
+//           spike passes the zone. Find the vein: hold the right button to
+//           feel, left-click to go in, hold left to push, let go at the
+//           flashback. In every game: Q give up, R try again (practice)
  
 #include <math.h>
 #include "raylib.h"
@@ -46,7 +54,7 @@
 #include "view3d.h"
 #include "conditions.h"
 #include "sound.h"
-#include "opgame.h"
+#include "minigames.h"
  
 // The 2D screens are laid out for SCREEN_W x SCREEN_H. In a bigger window
 // they're scaled up to fit, centred, with the mouse scaled to match so the
@@ -76,6 +84,7 @@ int main(void)
         ClearBackground(C_BG);
         EndDrawing();
     }
+    view3d_prepare();                    // the 3D view's signs and screens, made now so V is instant
     ClearWindowState(FLAG_WINDOW_HIDDEN);
     sound_init();                        // after the window; quietly does nothing without a sound device
  
@@ -102,8 +111,8 @@ int main(void)
         if (IsKeyPressed(KEY_M)) sound_toggle_mute();
 
         // The 2D screens are scaled to fit the window; the mouse has to be too.
-        // (The operation game is a 2D screen, even from the 3D view.)
-        bool operating = !showRoster && !sim.shiftOver && opgame_active();
+        // (The mini games are 2D screens, even from the 3D view.)
+        bool operating = !showRoster && !sim.shiftOver && minigames_active();
         bool in3d = !showRoster && !sim.shiftOver && view3d && !operating;
         Camera2D fit = fit_screen();
         if (in3d) {
@@ -157,11 +166,12 @@ int main(void)
                 showRoster = true;           // show who's on before the shift starts
             }
         } else if (operating) {
-            // The operation game: the simulation waits until it's over
-            opgame_update(&sim);
+            // The mini-game menu or a game: the simulation waits until it's closed
+            minigames_update(&sim);
         } else {
             // Input
-            if (IsKeyPressed(KEY_O)) opgame_start(&sim);       // operate: the patient in theatre, or practice
+            if (IsKeyPressed(KEY_G)) minigames_open_menu();    // the mini-game menu
+            if (IsKeyPressed(KEY_O)) minigames_start(&sim, MINIGAME_OPERATION);   // operate: the patient in theatre, or practice
             if (IsKeyPressed(KEY_SPACE)) paused = !paused;
             if (IsKeyPressed(KEY_V)) view3d = !view3d;
             if (view3d) view3d_update_camera();
@@ -177,7 +187,7 @@ int main(void)
  
             // Update
             if (!paused) sim_update(&sim, GetFrameTime() * speed);
-            opgame_watch(&sim);          // someone arrived in theatre: offer the game
+            minigames_watch(&sim);       // someone ready for a game: offer it
             sound_update(&sim, paused);  // siren and monitor alarm
         }
 
@@ -189,8 +199,8 @@ int main(void)
  
         // Draw
         BeginDrawing();
-        if (!showRoster && !sim.shiftOver && opgame_active()) {
-            opgame_draw(fit_screen());                   // the operation game, scaled to fit
+        if (!showRoster && !sim.shiftOver && minigames_active()) {
+            minigames_draw(&sim, fit_screen());          // the mini-game menu or a game, scaled to fit
         } else if (!showRoster && !sim.shiftOver && view3d) {
             view3d_draw(&sim, speed, paused);            // the whole window
         } else {
@@ -202,7 +212,7 @@ int main(void)
             else if (sim.shiftOver)          draw_shift_report(&sim);
             else {
                 draw_frame(&sim, speed, paused);
-                opgame_draw_offer(SCREEN_W / 2, SCREEN_H - 76);   // "SURGERY READY - press O"
+                minigames_draw_offers(SCREEN_W / 2, SCREEN_H - 73, true);   // "SURGERY READY: 38 (O)", ... under the staff
             }
             EndMode2D();
         }

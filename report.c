@@ -128,7 +128,9 @@ void draw_shift_report(const Sim *sim)
     row("Longest wait", TextFormat("%.0f min", sim_minutes(s->longestWait)),
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
     // The operation game (O): operations you did on real patients, and how many went wrong
-    row("Operations / went wrong", TextFormat("%d / %d", s->surgeriesPlayed, s->complications),
+    int played = s->surgeriesPlayed + s->shocksPlayed + s->veinsPlayed;
+    int lost = s->complications + s->shocksFailed + s->veinsFailed;
+    row("Mini games won / played", TextFormat("%d / %d", played - lost, played),
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 32;
  
     float bedUse = 100.0f * s->bedBusyTime    / (BED_COUNT    * SHIFT_LENGTH);

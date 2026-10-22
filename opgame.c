@@ -109,6 +109,8 @@ void opgame_watch(const Sim *sim)
     if (p->id != offerId) offerId = 0;
 }
 
+int opgame_offer(void) { return offerId; }
+
 void opgame_draw_offer(int centreX, int y)
 {
     if (offerId == 0 || state != GAME_OFF) return;

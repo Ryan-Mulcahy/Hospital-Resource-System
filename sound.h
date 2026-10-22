@@ -16,6 +16,8 @@ typedef enum {
     SND_SUCCESS,    // the operation game: surgery went well
     SND_ROTOR,      // helicopter blades (played on a loop while one is flying)
     SND_RAIN,       // rain (on a loop while it rains, 3D view)
+    SND_CHARGE,     // the defibrillator charging: a rising whine
+    SND_ZAP,        // the defibrillator's shock
     SND_COUNT
 } SoundId;
 

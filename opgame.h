@@ -34,6 +34,9 @@ void opgame_update(Sim *sim);
 // EndDrawing(), not inside BeginMode2D().
 void opgame_draw(Camera2D fit);
 
+// The patient waiting in theatre who can be operated on, or 0 if nobody.
+int opgame_offer(void);
+
 // The "SURGERY READY - press O" banner, while a patient is waiting in theatre.
 // Centred on centreX with its top at y.
 void opgame_draw_offer(int centreX, int y);

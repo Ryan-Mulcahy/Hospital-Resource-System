@@ -452,6 +452,39 @@ static void update_inbound(Sim *sim, float dt)
     }
 }
 
+void sim_shock_result(Sim *sim, int id, bool won)
+{
+    for (int i = 0; i < BED_COUNT; i++) {
+        Patient *p = sim->beds[i].occupant;
+        if (p == NULL || p->id != id) continue;
+        sim->stats.shocksPlayed++;
+        if (won) {
+            p->treatmentLeft *= 0.5f;
+        } else {
+            p->treatmentLeft += 0.3f * p->treatmentTotal;
+            sim->stats.shocksFailed++;
+        }
+        return;
+    }
+}
+
+void sim_vein_result(Sim *sim, int id, bool won)
+{
+    SimRoom *room = &sim->rooms[ROOM_BLOODS];
+    for (int s = 0; s < room->capacity; s++) {
+        Patient *p = room->in[s];
+        if (p == NULL || p->id != id) continue;
+        sim->stats.veinsPlayed++;
+        if (won) {
+            p->roomLeft *= 0.5f;
+        } else {
+            p->roomLeft += 0.5f * room->duration;
+            sim->stats.veinsFailed++;
+        }
+        return;
+    }
+}
+
 void sim_init(Sim *sim, int day)
 {
     *sim = (Sim){ 0 };

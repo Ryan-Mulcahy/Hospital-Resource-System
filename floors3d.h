@@ -4,7 +4,7 @@
 //                cardiology (the cath lab), ICU, pharmacy, the laboratory
 //                and the staff room.
 //   Second floor (wards and therapy): maternity, the children's ward,
-//                physiotherapy, dialysis, the chapel and the cafe.
+//                physiotherapy, dialysis, a waiting area and the cafe.
 //
 // Each floor has the same corridors as the ground floor: one beside A&E's
 // left wall, with the lifts at its far end, and one along the back. Patients
@@ -19,6 +19,10 @@
 
 // Make the signs the first time. Call each frame before BeginMode3D().
 void floors3d_prepare(void);
+
+// Update the screens upstairs (the waiting area's "now calling" screen).
+// Call each frame before BeginMode3D().
+void floors3d_update(const Sim *sim);
 
 // Draw one floor upstairs (1 or 2) with everyone in it, at its own height.
 // Call inside BeginMode3D(). The camera decides which walls are cut down.

@@ -19,8 +19,9 @@
 //      x -16.5   -9.7 -8.1                             8.1
 //                   (L: the lifts)
 //
-//   SECOND FLOOR: wards and therapy
-//         | CHAPEL | PHYSIOTHERAPY |      DIALYSIS          |
+//   SECOND FLOOR: wards and therapy (with a waiting area where everyone
+//   queuing for a room on this floor sits until they're called)
+//         | WAITING| PHYSIOTHERAPY |      DIALYSIS          |
 //         |  CAFE  |  MATERNITY    |   CHILDREN'S WARD      |
 //
 // Everything on a floor is drawn as if it were on the ground, then lifted up
@@ -74,7 +75,7 @@ typedef struct {
 } UpperRoom;
 
 enum { CT, ULTRA, CATH, ICU, PHARM, LAB, STAFF,             // first floor
-       PHYSIO, DIALYSIS, MATERN, KIDS, CHAPEL, CAFE,         // second floor
+       PHYSIO, DIALYSIS, MATERN, KIDS, WAITING, CAFE,         // second floor
        UPPER_ROOMS };
 
 static const UpperRoom ROOMS[UPPER_ROOMS] = {
@@ -89,7 +90,7 @@ static const UpperRoom ROOMS[UPPER_ROOMS] = {
     [DIALYSIS] = { 2, ROOM_DIALYSIS,   "DIALYSIS",         -3.3f, -13.0f,  8.1f, BACK_Z, {  55, 120, 175, 255 }, DOOR_BACK,  -2.3f,  15.0f },
     [MATERN]   = { 2, ROOM_MATERNITY,  "MATERNITY",       SIDE_X, CORR_Z,  0.0f,   7.6f, { 205, 105, 170, 255 }, DOOR_SIDE,  -0.9f,  16.0f },
     [KIDS]     = { 2, ROOM_CHILDREN,   "CHILDREN'S WARD",   0.0f, CORR_Z,  8.1f,   7.6f, { 240, 150,  35, 255 }, DOOR_FRONT,  4.0f,  16.0f },
-    [CHAPEL]   = { 2, -1,              "CHAPEL",         -16.5f, -13.0f, WING_X,  -4.2f, { 125,  95, 165, 255 }, DOOR_WING,  -5.95f, 13.0f },
+    [WAITING]  = { 2, -1,              "WAITING AREA",   -16.5f, -13.0f, WING_X,  -4.2f, {  40, 150, 160, 255 }, DOOR_WING,  -5.95f, 13.0f },
     [CAFE]     = { 2, -1,              "CAFE",           -16.5f,  -4.2f, WING_X,   7.6f, { 185, 110,  55, 255 }, DOOR_WING,  -2.45f, 15.0f },
 };
 
@@ -97,7 +98,7 @@ static const UpperRoom ROOMS[UPPER_ROOMS] = {
 static const char *KEY_NAME[UPPER_ROOMS] = {
     [CT] = "CT", [ULTRA] = "Ultrasound", [CATH] = "Cardiology", [ICU] = "ICU", [PHARM] = "Pharmacy",
     [LAB] = "Lab", [STAFF] = "Staff room", [PHYSIO] = "Physio", [DIALYSIS] = "Dialysis",
-    [MATERN] = "Maternity", [KIDS] = "Children", [CHAPEL] = "Chapel", [CAFE] = "Cafe",
+    [MATERN] = "Maternity", [KIDS] = "Children", [WAITING] = "Waiting area", [CAFE] = "Cafe",
 };
 
 // ---- Colours for this file ----
@@ -131,7 +132,7 @@ static bool ready = false;
 static RenderTexture2D roomSign[UPPER_ROOMS];
 static float roomSignW[UPPER_ROOMS];
 static RenderTexture2D floorSign[FLOORS];             // over the lifts: "FIRST FLOOR ..."
-static RenderTexture2D ultrasoundScreen, menuBoard, radiationSign;
+static RenderTexture2D ultrasoundScreen, menuBoard, radiationSign, callingScreen;
 
 static const Sim *simNow;
 static float now;
@@ -341,10 +342,32 @@ static Vector3 slot_stand(int simRoom, int slot)
 
 // Where the k-th patient queuing for a room waits, which way they face, and
 // whether they sit (the pharmacy's chairs).
+// The second floor's waiting area: a row of five chairs for each room on the
+// floor, facing a screen that calls people in. Row 0 is physio, then
+// dialysis, maternity and the children's ward.
+#define WAIT_ROWS      4
+#define WAIT_SEATS     5
+static const int WAIT_ROOM[WAIT_ROWS] = { ROOM_PHYSIO, ROOM_DIALYSIS, ROOM_MATERNITY, ROOM_CHILDREN };
+static float wait_row_x(int row)  { return -11.6f - row * 1.25f; }
+static float wait_seat_z(int k)   { return -11.9f + k * 0.75f; }
+#define WAIT_AISLE_Z  -7.7f      // the walkway along the front of the rows
+
+static int wait_row_of(int simRoom)
+{
+    for (int r = 0; r < WAIT_ROWS; r++) if (WAIT_ROOM[r] == simRoom) return r;
+    return -1;
+}
+
 static Vector3 queue_spot(int simRoom, int k, Facing *f, bool *seated)
 {
     const UpperRoom *r = &ROOMS[upper_of(simRoom)];
     *seated = false;
+    int row = wait_row_of(simRoom);
+    if (row >= 0) {                                   // second floor: a seat in the waiting area
+        *f = FACE_WEST;
+        *seated = true;
+        return v3(wait_row_x(row), 0, wait_seat_z(k < WAIT_SEATS ? k : WAIT_SEATS - 1));
+    }
     switch (r->wall) {
         case DOOR_BACK:  *f = FACE_NORTH; return v3(r->door + 0.95f + 0.65f * k, 0, -6.3f);   // in the back corridor
         case DOOR_FRONT: *f = FACE_SOUTH; return v3(r->door + 0.95f + 0.65f * k, 0, -5.6f);
@@ -375,6 +398,17 @@ int floors3d_path(int room, int place, Vector3 *pts, int max)
     ADD(v3(LIFT_X, 0, LIFT_Z));
     ADD(v3(LIFT_X, y, LIFT_Z));
     ADD(v3(WALK_X, y, 5.9f));
+    ADD(v3(WALK_X, y, -0.9f));            // (on the way up the corridor: every route here shares it)
+    int row = wait_row_of(room);
+    if (queue && row >= 0) {              // to a seat in the second floor's waiting area
+        ADD(v3(WALK_X, y, -5.95f));
+        ADD(v3(-10.6f, y, -5.95f));
+        ADD(v3(-10.6f, y, WAIT_AISLE_Z));
+        ADD(v3(end.x + 0.65f, y, WAIT_AISLE_Z));
+        ADD(v3(end.x + 0.65f, y, end.z));
+        ADD(end);
+        return n;
+    }
     switch (r->wall) {
         case DOOR_BACK:
         case DOOR_FRONT:
@@ -383,8 +417,7 @@ int floors3d_path(int room, int place, Vector3 *pts, int max)
             if (!queue) ADD(v3(r->door, y, r->wall == DOOR_BACK ? -7.4f : -4.5f));   // just inside
             break;
         case DOOR_SIDE:
-            ADD(v3(WALK_X, y, r->door));
-            if (!queue) ADD(v3(-7.4f, y, r->door));
+            if (!queue) ADD(v3(-7.4f, y, r->door));   // (the door is at z -0.9, where they are now)
             break;
         default:                                                // the left wing
             ADD(v3(WALK_X, y, r->door));
@@ -1039,45 +1072,63 @@ static void draw_childrens_ward(void)
     room_sign(KIDS);
 }
 
-// Chapel: pews facing a table with candles, and a stained-glass window
-static void draw_chapel(void)
+// The waiting area: everyone queuing for physio, dialysis, maternity or the
+// children's ward sits here, in their room's row, until a screen calls them.
+// There's a water cooler, a magazine table and toys.
+static void draw_waiting_area(void)
 {
-    // Carpet up the middle, pews either side
-    draw_box(v3(-13.0f, 0.01f, -8.6f), v3(5.0f, 0.02f, 1.0f), (Color){ 150, 60, 70, 255 });
-    for (int row = 0; row < 4; row++) {
-        float x = -14.2f + row * 1.1f;
-        for (int side = -1; side <= 1; side += 2) {
-            float z = -8.6f + side * 1.8f;
-            draw_box(v3(x, 0.42f, z), v3(0.4f, 0.06f, 2.2f), C_DARKWOOD);
-            draw_box(v3(x + 0.2f, 0.7f, z), v3(0.06f, 0.6f, 2.2f), C_DARKWOOD);
-            draw_box(v3(x, 0.2f, z), v3(0.36f, 0.4f, 0.08f), C_DARKWOOD);
-        }
+    for (int row = 0; row < WAIT_ROWS; row++) {
+        const UpperRoom *r = &ROOMS[upper_of(WAIT_ROOM[row])];
+        float x = wait_row_x(row);
+        // a strip of the room's colour on the floor, and its name on a little sign at the end of the row
+        draw_box(v3(x + 0.05f, 0.012f, (wait_seat_z(0) + wait_seat_z(WAIT_SEATS - 1)) / 2), v3(0.9f, 0.02f, WAIT_SEATS * 0.75f + 0.2f), pale(r->colour, 0.5f));
+        draw_box(v3(x, 0.5f, wait_seat_z(0) - 0.55f), v3(0.06f, 1.0f, 0.06f), C_STEEL);
+        draw_box(v3(x, 1.05f, wait_seat_z(0) - 0.55f), v3(0.5f, 0.24f, 0.05f), r->colour);
+        for (int k = 0; k < WAIT_SEATS; k++) furniture_chair(v3(x, 0, wait_seat_z(k)), FACE_WEST, C_CHAIR);
     }
-    person_seated(v3(-13.0f, 0, -10.6f), FACE_WEST, (Color){ 90, 90, 120, 255 }, C_TROUSERS, C_GREY_HAIR, false);
-    // The table, and candles flickering on it
-    draw_box(v3(-15.8f, 0.45f, -8.6f), v3(0.6f, 0.9f, 1.6f), C_CARD);
-    for (int i = 0; i < 3; i++) {
-        float z = -9.1f + i * 0.5f;
-        draw_box(v3(-15.8f, 1.02f, z), v3(0.08f, 0.14f, 0.08f), C_CARD);
-        float flick = 0.85f + 0.15f * sinf(now * 13.0f + i * 2.1f);
-        draw_lit_box(v3(-15.8f, 1.13f, z), v3(0.04f, 0.06f * flick, 0.04f), (Color){ 255, 200, 90, 255 });
-    }
-    // Stained glass in the outside wall: squares of colour, lit from outside
+    // The screen calling people in, on the outside wall
     if (!lowWest) {
-        Color glass[5] = { (Color){ 200, 60, 70, 255 }, (Color){ 60, 110, 200, 255 }, (Color){ 240, 200, 60, 255 },
-                           (Color){ 80, 170, 100, 255 }, (Color){ 150, 90, 190, 255 } };
-        float bright = 1.0f - 0.5f * view3d_darkness();
-        for (int i = 0; i < 4; i++) {
-            for (int j = 0; j < 5; j++) {
-                Color c = glass[(i * 3 + j) % 5];
-                c = (Color){ (unsigned char)(c.r * bright), (unsigned char)(c.g * bright), (unsigned char)(c.b * bright), 255 };
-                draw_lit_box(v3(BUILDING_X0 + 0.13f, 1.2f + i * 0.3f, -9.2f + j * 0.3f), v3(0.02f, 0.27f, 0.27f), c);
-            }
-        }
+        float x = BUILDING_X0 + 0.14f;
+        draw_box(v3(x, 1.9f, -9.4f), v3(0.08f, 1.1f, 2.6f), C_DARK);
+        sign_quad(callingScreen.texture, v3(x + 0.05f, 2.4f, -8.2f), v3(x + 0.05f, 2.4f, -10.6f),
+                                         v3(x + 0.05f, 1.4f, -10.6f), v3(x + 0.05f, 1.4f, -8.2f));
     }
-    draw_plant(-10.4f, -12.2f);
-    draw_plant(-15.8f, -12.2f);
-    room_sign(CHAPEL);
+    // A water cooler, a table of magazines, and a box of toys for children waiting
+    draw_box(v3(-16.1f, 0.55f, -5.0f), v3(0.4f, 1.1f, 0.4f), C_MACHINE);
+    draw_box(v3(-16.1f, 1.3f, -5.0f), v3(0.3f, 0.4f, 0.3f), (Color){ 150, 200, 240, 255 });
+    draw_box(v3(-13.5f, 0.35f, -5.3f), v3(1.2f, 0.06f, 0.6f), C_WOOD);
+    draw_box(v3(-13.5f, 0.17f, -5.3f), v3(0.08f, 0.34f, 0.08f), C_STEEL);
+    Color mags[3] = { C_PINK, C_BLUE, C_LEMON };
+    for (int i = 0; i < 3; i++) draw_box(v3(-13.9f + i * 0.35f, 0.39f, -5.3f), v3(0.24f, 0.02f, 0.32f), mags[i]);
+    draw_box(v3(-15.6f, 0.25f, -6.4f), v3(0.8f, 0.5f, 0.5f), (Color){ 240, 150, 35, 255 });
+    child_standing(v3(-14.8f, 0, -6.6f), FACE_WEST, (Color){ 90, 170, 230, 255 }, C_NAVY, C_FAIR_HAIR);
+    draw_plant(-16.0f, -12.4f);
+    draw_plant(-11.0f, -5.0f);
+    room_sign(WAITING);
+}
+
+// The waiting area's screen: who's next for each room on the second floor.
+static void update_calling_screen(const Sim *sim)
+{
+    BeginTextureMode(callingScreen);
+        ClearBackground((Color){ 14, 24, 40, 255 });
+        DrawRectangle(0, 0, 320, 34, (Color){ 40, 150, 160, 255 });
+        DrawText("NOW CALLING", 12, 7, 22, WHITE);
+        for (int row = 0; row < WAIT_ROWS; row++) {
+            int r = WAIT_ROOM[row];
+            const Patient *next = sim->rooms[r].queue;
+            int y = 44 + row * 23;
+            DrawText(sim->rooms[r].name, 12, y, 18, (Color){ 170, 185, 210, 255 });
+            const char *who = next ? TextFormat("Patient %d", next->id) : "-";
+            DrawText(who, 308 - MeasureText(who, 18), y, 18, next ? (Color){ 120, 230, 160, 255 } : (Color){ 90, 100, 120, 255 });
+        }
+    EndTextureMode();
+}
+
+void floors3d_update(const Sim *sim)
+{
+    if (!ready) floors3d_prepare();
+    update_calling_screen(sim);
 }
 
 // Cafe: the counter with a coffee machine and cakes, tables of visitors
@@ -1186,6 +1237,8 @@ void floors3d_prepare(void)
     floorSign[2] = make_sign("2   BABIES, CHILDREN, THERAPY", 600, 140, 40, C_DARK, WHITE);
     radiationSign = make_sign("RADIATION", 384, 128, 56, (Color){ 245, 200, 40, 255 }, C_DARK);
     menuBoard = make_sign("COFFEE  TEA  CAKE", 480, 160, 44, C_DARK, (Color){ 250, 230, 180, 255 });
+    callingScreen = LoadRenderTexture(320, 140);
+    SetTextureFilter(callingScreen.texture, TEXTURE_FILTER_BILINEAR);
     // The ultrasound's picture: a grey fan on black
     ultrasoundScreen = LoadRenderTexture(160, 128);
     BeginTextureMode(ultrasoundScreen);
@@ -1233,7 +1286,7 @@ void floors3d_draw(const Sim *sim, int floor, Vector3 camPos, Vector3 camTarget)
         draw_dialysis();
         draw_maternity();
         draw_childrens_ward();
-        draw_chapel();
+        draw_waiting_area();
         draw_cafe();
     }
     draw_queues();
@@ -1280,7 +1333,7 @@ void floors3d_lights(const Sim *sim, int floor)
         if (in_room(ROOM_CT, 0)) glow(-7.4f, -10.2f, 1.2f, (Color){ 255, 230, 160, 50 });
         glow(1.6f, -11.0f, 1.0f, (Color){ 140, 190, 255, 40 });          // the ultrasound screen
     } else {
-        for (int i = 0; i < 3; i++) glow(-15.8f, -9.1f + i * 0.5f, 0.8f, (Color){ 255, 190, 90, 70 });   // candles
+        glow(-15.9f, -9.4f, 1.2f, (Color){ 140, 190, 255, 45 });          // the waiting area's screen
         if (lamps) {
             for (int i = 0; i < 2; i++) glow(MATERN_BED_X[i], BED_ROW_Z, 1.5f, (Color){ 255, 190, 210, 55 });
             for (int i = 0; i < 3; i++) glow(KIDS_BED_X, KIDS_BED_Z[i], 1.2f, (Color){ 255, 220, 150, 50 });
@@ -1300,5 +1353,6 @@ void floors3d_close(void)
     UnloadRenderTexture(ultrasoundScreen);
     UnloadRenderTexture(menuBoard);
     UnloadRenderTexture(radiationSign);
+    UnloadRenderTexture(callingScreen);
     ready = false;
 }

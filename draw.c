@@ -354,7 +354,7 @@ void draw_frame(const Sim *sim, float speed, bool paused)
     draw_beds(sim);
     draw_nurses(sim);
     draw_stats(sim, speed, paused);
-    DrawText("V 3D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   O operate   M mute   R reset",
+    DrawText("V 3D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   G games   O operate   M mute   R reset",
              40, SCREEN_H - 40, 16, t.muted);
     draw_rescue_banner(sim, 810, 6);
 }

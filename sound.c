@@ -167,6 +167,38 @@ static Sound make_rain(void)
     return to_sound(w, 0.0f);
 }
 
+// The defibrillator charging: a whine that rises from 400 to 2400 Hz
+static Sound make_charge(void)
+{
+    float len = 1.2f;
+    Wave w = new_wave(len);
+    short *out = (short *)w.data;
+    float phase = 0;
+    for (unsigned int i = 0; i < w.frameCount; i++) {
+        float t = (float)i / RATE;
+        float freq = 400.0f + 2000.0f * (t / len) * (t / len);
+        phase += 2 * PI * freq / RATE;
+        out[i] = (short)(sinf(phase) * edges(t, len, 0.02f, 0.05f) * 0.35f * 32767);
+    }
+    return to_sound(w, 0.25f);
+}
+
+// The shock: a short crack of noise with a low thump under it
+static Sound make_zap(void)
+{
+    float len = 0.35f;
+    Wave w = new_wave(len);
+    short *out = (short *)w.data;
+    for (unsigned int i = 0; i < w.frameCount; i++) {
+        float t = (float)i / RATE;
+        float v = noise() * expf(-12.0f * t) + 0.6f * sinf(2 * PI * 60.0f * t) * expf(-8.0f * t);
+        if (v > 1) v = 1;
+        if (v < -1) v = -1;
+        out[i] = (short)(v * edges(t, len, 0.002f, 0.05f) * 0.8f * 32767);
+    }
+    return to_sound(w, 0.45f);
+}
+
 void sound_init(void)
 {
     InitAudioDevice();
@@ -179,6 +211,8 @@ void sound_init(void)
     sounds[SND_SUCCESS] = make_success();
     sounds[SND_ROTOR]   = make_rotor();
     sounds[SND_RAIN]    = make_rain();
+    sounds[SND_CHARGE]  = make_charge();
+    sounds[SND_ZAP]     = make_zap();
 }
 
 void sound_close(void)

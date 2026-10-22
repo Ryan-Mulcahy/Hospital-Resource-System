@@ -48,7 +48,7 @@
 #include "view3d_parts.h"   // colours and helpers shared with rooms3d.c
 #include "rooms3d.h"        // the rest of the hospital
 #include "sound.h"          // the door chime, helicopter blades and rain
-#include "opgame.h"         // the "SURGERY READY" banner
+#include "minigames.h"      // the "SURGERY READY" banners
 #include "floors3d.h"       // the floors upstairs, and the lifts
 #include "outside3d.h"      // the grounds, and the building seen from outside
 
@@ -2220,6 +2220,14 @@ static void make_signs(void)
     signsReady = true;
 }
 
+void view3d_prepare(void)
+{
+    if (!signsReady) make_signs();
+    rooms3d_prepare(NULL);
+    floors3d_prepare();
+    outside3d_prepare();
+}
+
 void view3d_close(void)
 {
     if (!signsReady) return;
@@ -2728,7 +2736,7 @@ static void journey_card(const Sim *sim)
 {
     // Kept from frame to frame, so the card still says who they were once they've left
     static int  cardId = 0;
-    static char who[64], what[96], came[96], next[96], kit[96];
+    static char who[64], what[96], came[96], next[96], kit[112];
     static int  severity = 3;
     char now[128];
 
@@ -2858,7 +2866,7 @@ static void hud(const Sim *sim, float speed, bool paused)
     DrawText(number_key_help(), 20, (int)hudH - 70, 14, soft);
     DrawText("Drag to turn   Right-drag to move   Scroll to zoom   Click a patient to follow   T cinematic tour   F floors",
              20, (int)hudH - 50, 14, soft);
-    DrawText("V 2D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   O operate   M mute",
+    DrawText("V 2D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   G games   O operate   M mute",
              20, (int)hudH - 30, 14, soft);
 }
 
@@ -2884,6 +2892,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     if (!signsReady) make_signs();
     rooms3d_prepare(sim);            // the other rooms' signs, before the scene too
     floors3d_prepare();              // ...and the signs upstairs and outside
+    floors3d_update(sim);            // the waiting area's screen upstairs
     outside3d_prepare();
     update_tv(sim);                  // draws into the TV's picture, so before the scene
     update_bed_screens(sim);         // and the screens behind the beds
@@ -3133,6 +3142,6 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     hud(sim, speed, paused);
     if (hoverBed != -1 && !IsMouseButtonDown(MOUSE_BUTTON_LEFT)) bed_tooltip(sim, hoverBed);
     draw_rescue_banner(sim, (int)hudW / 2, 72);     // e.g. "COAST GUARD RESCUE INBOUND"
-    opgame_draw_offer((int)hudW / 2, 110);          // "SURGERY READY - press O"
+    minigames_draw_offers((int)hudW / 2, 110, false);   // "SURGERY READY - press O", ... one under another
     EndMode2D();
 }
