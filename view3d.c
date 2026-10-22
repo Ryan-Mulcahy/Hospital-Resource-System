@@ -103,10 +103,19 @@ typedef struct {
     Vector3 points[MAX_POINTS];
     int count;                   // points in use
     int next;                    // the point they are walking to
+    float walkSpeed;             // metres per second at 1x speed for this walk
     float phase;                 // for swinging arms and legs
 } Tracked;
 
 static Tracked tracked[MAX_TRACKED];
+
+// Patients walk at a normal pace, a bit brisker on longer walks, but a walk
+// never takes longer than WALK_MAX_SECONDS (at 1x speed). If it would, they
+// skip the start of it: they appear further along the corridor, so they still
+// arrive while they're meant to be there, without zooming about.
+#define WALK_PACE        2.4f    // normal walking speed, metres per second
+#define WALK_FAST        4.0f    // the fastest anyone walks
+#define WALK_MAX_SECONDS 2.5f
 static int    lastSeenId = 0;            // highest patient id already seen arriving
 static double lastDrawTime = -100.0;     // to notice when the 3D view is opened again
 static float  doorOpen = 0.0f;           // 0 = closed, 1 = fully open
@@ -117,13 +126,20 @@ typedef enum { V_IDLE, V_ARRIVING, V_UNLOADING, V_LEAVING } VehicleState;
 typedef struct {
     VehicleState state;
     float t;                     // seconds into the current state
+    int service;                 // helicopters: whose it is (a RescueService), for its colours
 } Vehicle;
 
-#define HELI 2                   // vehicle number of the helicopter
-static Vehicle vehicles[AMB_BAYS + 1];   // ambulances 0 and 1 (one per bay), then the helicopter
-static float rotor = 0.0f;               // the helicopter's rotor angle, in degrees
-static int   heliService = 0;            // whose helicopter is flying: coast guard, search
-                                         // and rescue or fire service (a RescueService)
+// Vehicles 0 and 1 are the ambulances (one per bay); 2 and 3 are helicopters.
+// Each helicopter brings one patient. Two of them take turns on the pad, so
+// the next can be flying in while the last one takes off.
+#define HELI_FIRST    AMB_BAYS
+#define HELI_COUNT    2
+#define VEHICLES      (AMB_BAYS + HELI_COUNT)
+#define HELI_WAITING  99         // Tracked.vehicle: waiting for the next helicopter
+static Vehicle vehicles[VEHICLES];
+static float rotor = 0.0f;       // the helicopters' rotor angle, in degrees
+
+static bool is_heli(int k) { return k >= HELI_FIRST; }
 
 // How long each part takes, in seconds at normal speed
 #define AMB_DRIVE_IN   4.0f
@@ -691,6 +707,35 @@ static void draw_floor(void)
          v3(hx + 0.65f, 0.012f, hz + hw), v3(hx - 0.65f, 0.012f, hz + hw), white);                 // middle
 }
 
+// A tree: a trunk and a few blocks of leaves. `k` varies the size and shade.
+static void draw_tree(float x, float z, int k)
+{
+    float h = 1.6f + (k % 3) * 0.35f;
+    Color leaf = (k % 2) ? (Color){ 70, 150, 80, 255 } : (Color){ 90, 165, 85, 255 };
+    shadow(x, z, 1.6f, 1.6f);
+    draw_box(v3(x, h / 2, z), v3(0.28f, h, 0.28f), (Color){ 120, 85, 55, 255 });
+    draw_box(v3(x, h + 0.45f, z), v3(1.5f, 1.0f, 1.5f), leaf);
+    draw_box(v3(x + 0.15f, h + 1.15f, z - 0.1f), v3(1.0f, 0.7f, 1.0f), shade(leaf, 1.08f));
+    draw_box(v3(x - 0.35f, h + 0.25f, z + 0.3f), v3(0.8f, 0.6f, 0.8f), shade(leaf, 0.92f));
+}
+
+// Grass all round the hospital, with trees along the edges, so it isn't
+// floating in the sky.
+static void draw_grounds(void)
+{
+    Color grass = shade((Color){ 150, 192, 125, 255 }, 1.0f);
+    quad(v3(-45.0f, -0.02f, -40.0f), v3(50.0f, -0.02f, -40.0f), v3(50.0f, -0.02f, 40.0f), v3(-45.0f, -0.02f, 40.0f), grass);
+    // A path from the street to the front doors
+    Color path = shade((Color){ 205, 200, 190, 255 }, 1.0f);
+    quad(v3(8.2f, -0.01f, 8.4f), v3(13.2f, -0.01f, 8.4f), v3(13.2f, -0.01f, ROAD_END), v3(8.2f, -0.01f, ROAD_END), path);
+
+    int k = 0;
+    for (float z = -15.0f; z <= 10.0f; z += 3.6f) draw_tree(-19.5f, z, k++);      // left
+    for (float x = -16.0f; x <= 6.0f; x += 3.7f)  draw_tree(x, 10.6f, k++);       // front
+    for (float x = -15.0f; x <= 14.0f; x += 4.0f) draw_tree(x, -16.0f, k++);      // back
+    for (float z = -14.0f; z <= 18.0f; z += 4.0f) draw_tree(18.2f, z, k++);       // right, past the road
+}
+
 // Green lights round the helipad and a windsock (they stand up, so not in draw_floor)
 static void draw_helipad_kit(void)
 {
@@ -1066,6 +1111,25 @@ static void start_walk(Tracked *t)
 {
     t->walking = true;
     t->next = 0;
+    // How far is it?
+    float length = 0.0f;
+    Vector3 from = t->pos;
+    for (int i = 0; i < t->count; i++) {
+        float dx = t->points[i].x - from.x, dz = t->points[i].z - from.z;
+        length += sqrtf(dx * dx + dz * dz);
+        from = t->points[i];
+    }
+    // Too far to walk in time even briskly: skip ahead along the route
+    float longest = WALK_FAST * WALK_MAX_SECONDS;
+    float skip = length - longest;
+    while (skip > 0.0f && t->next < t->count) {
+        Vector3 g = t->points[t->next];
+        float dx = g.x - t->pos.x, dz = g.z - t->pos.z, d = sqrtf(dx * dx + dz * dz);
+        if (d <= skip) { t->pos = g; t->next++; skip -= d; }
+        else           { t->pos.x += dx / d * skip; t->pos.z += dz / d * skip; skip = 0.0f; }
+    }
+    if (length > longest) length = longest;
+    t->walkSpeed = fminf(fmaxf(WALK_PACE, length / WALK_MAX_SECONDS), WALK_FAST);
 }
 
 // Plan a walk from where they are now (their old place) to `to`.
@@ -1163,10 +1227,10 @@ static void ambulance_place(int k, Vector3 *pos, float *angle)
     }
 }
 
-// Where the helicopter is (the bottom of its skids) and which way it faces.
-static void helicopter_place(Vector3 *pos, float *angle)
+// Where helicopter k is (the bottom of its skids) and which way it faces.
+static void helicopter_place(int k, Vector3 *pos, float *angle)
 {
-    const Vehicle *v = &vehicles[HELI];
+    const Vehicle *v = &vehicles[k];
     Vector3 far0 = v3(42.0f, 20.0f, -32.0f), hover = v3(HELI_X, 6.0f, HELI_Z), far1 = v3(-30.0f, 22.0f, -40.0f);
     Vector3 pad = v3(HELI_X, 0, HELI_Z);
     float t = v->t;
@@ -1194,9 +1258,30 @@ static void helicopter_place(Vector3 *pos, float *angle)
 }
 
 // How long the arriving part takes, then the unloading part.
-static float vehicle_arrive_time(int k) { return (k == HELI) ? HELI_APPROACH + HELI_DESCEND : AMB_DRIVE_IN + AMB_REVERSE; }
-static float vehicle_unload_time(int k) { return (k == HELI) ? HELI_UNLOAD : AMB_UNLOAD; }
-static float vehicle_leave_time(int k)  { return (k == HELI) ? HELI_CLIMB + HELI_DEPART : AMB_TURN_OUT + AMB_DRIVE_OUT; }
+static float vehicle_arrive_time(int k) { return is_heli(k) ? HELI_APPROACH + HELI_DESCEND : AMB_DRIVE_IN + AMB_REVERSE; }
+static float vehicle_unload_time(int k) { return is_heli(k) ? HELI_UNLOAD : AMB_UNLOAD; }
+static float vehicle_leave_time(int k)  { return is_heli(k) ? HELI_CLIMB + HELI_DEPART : AMB_TURN_OUT + AMB_DRIVE_OUT; }
+
+// Is the helipad free for another helicopter to come in? (Not while one is
+// landing or on the pad; once it's taking off the next can start its approach.)
+static bool pad_free(void)
+{
+    for (int k = HELI_FIRST; k < VEHICLES; k++) {
+        if (vehicles[k].state == V_ARRIVING || vehicles[k].state == V_UNLOADING) return false;
+    }
+    return true;
+}
+
+// The rescue patient who has waited longest for a helicopter, or NULL.
+static Tracked *next_heli_passenger(void)
+{
+    Tracked *best = NULL;
+    for (int i = 0; i < MAX_TRACKED; i++) {
+        Tracked *t = &tracked[i];
+        if (t->used && t->vehicle == HELI_WAITING && (best == NULL || t->id < best->id)) best = t;
+    }
+    return best;
+}
 
 // Is anyone still waiting to get out of vehicle k?
 static bool vehicle_has_passenger(int k)
@@ -1210,16 +1295,18 @@ static bool vehicle_has_passenger(int k)
 static void update_vehicles(float dt)
 {
     rotor = fmodf(rotor + dt * 900.0f, 360.0f);
-    for (int k = 0; k <= HELI; k++) {
+    for (int k = 0; k < VEHICLES; k++) {
         Vehicle *v = &vehicles[k];
         if (v->state == V_IDLE) {
-            if (vehicle_has_passenger(k)) {                                    // someone to bring in
-                v->state = V_ARRIVING;
-                v->t = 0;
-                if (k == HELI) {                  // the helicopter of whoever has waited longest
-                    for (int i = 0; i < MAX_TRACKED; i++) {
-                        if (tracked[i].used && tracked[i].vehicle == HELI) { heliService = tracked[i].service; break; }
-                    }
+            if (!is_heli(k)) {
+                if (vehicle_has_passenger(k)) { v->state = V_ARRIVING; v->t = 0; }   // someone to bring in
+            } else if (pad_free()) {
+                Tracked *t = next_heli_passenger();      // one rescue patient per flight
+                if (t != NULL) {
+                    t->vehicle = k;
+                    v->service = t->service;             // their service's helicopter and colours
+                    v->state = V_ARRIVING;
+                    v->t = 0;
                 }
             }
             continue;
@@ -1236,10 +1323,10 @@ static void unload_passengers(void)
 {
     for (int i = 0; i < MAX_TRACKED; i++) {
         Tracked *t = &tracked[i];
-        if (!t->used || t->vehicle < 0 || vehicles[t->vehicle].state != V_UNLOADING) continue;
-        if (t->vehicle == HELI && t->service != heliService) continue;   // their own service's helicopter comes next
+        if (!t->used || t->vehicle < 0 || t->vehicle == HELI_WAITING) continue;
+        if (vehicles[t->vehicle].state != V_UNLOADING) continue;
         t->count = 0;
-        if (t->vehicle == HELI) {
+        if (is_heli(t->vehicle)) {
             t->pos = v3(HELI_X - 1.0f, 0, HELI_Z + 0.6f);
             add_point(t, v3(8.85f, 0, HELI_Z + 2.6f));
             add_point(t, v3(8.85f, 0, 3.5f));
@@ -1261,7 +1348,7 @@ static void arrive(Tracked *t, const Patient *p)
     t->count = 0;
     t->vehicle = -1;
     if (p->rescue) {
-        t->vehicle = HELI;                    // waits for the helicopter to land
+        t->vehicle = HELI_WAITING;            // waits for a helicopter to bring them
     } else if (p->severity == 1) {
         for (int k = 0; k < AMB_BAYS; k++) {  // a free ambulance brings them in
             if (vehicles[k].state == V_IDLE && !vehicle_has_passenger(k)) { t->vehicle = k; break; }
@@ -1321,7 +1408,7 @@ static void update_patients(const Sim *sim, float speed)
     lastDrawTime = now;
     if (resync) {
         for (int i = 0; i < MAX_TRACKED; i++) tracked[i].used = false;
-        for (int k = 0; k <= HELI; k++) vehicles[k] = (Vehicle){ V_IDLE, 0 };
+        for (int k = 0; k < VEHICLES; k++) vehicles[k] = (Vehicle){ V_IDLE, 0, 0 };
         lastSeenId = sim->nextId - 1;
     }
     for (int i = 0; i < MAX_TRACKED; i++) tracked[i].seen = false;
@@ -1356,16 +1443,17 @@ static void update_patients(const Sim *sim, float speed)
         walk_home(t);
     }
 
-    // Vehicles move on real time, faster when the simulation is sped up
-    float factor = fminf(fmaxf(speed, 1.0f), 4.0f);
-    update_vehicles(GetFrameTime() * factor);
+    // Vehicles and people move at the simulation's speed, so they keep up
+    // with it (and stand still while it's paused)
+    float dt = GetFrameTime() * speed;
+    update_vehicles(dt);
     unload_passengers();
 
     // Move everyone along
-    float pace = 2.8f * factor * GetFrameTime();
     for (int i = 0; i < MAX_TRACKED; i++) {
         Tracked *t = &tracked[i];
         if (!t->used || !t->walking || t->vehicle >= 0) continue;
+        float pace = t->walkSpeed * dt;
         float left = pace;
         while (left > 0 && t->next < t->count) {
             Vector3 g = t->points[t->next];
@@ -1411,10 +1499,11 @@ static void draw_vehicles(void)
         ambulance_place(k, &pos, &angle);
         draw_ambulance(pos, angle, vehicles[k].state != V_LEAVING);
     }
-    if (vehicles[HELI].state != V_IDLE) {
+    for (int k = HELI_FIRST; k < VEHICLES; k++) {
+        if (vehicles[k].state == V_IDLE) continue;
         Vector3 pos; float angle;
-        helicopter_place(&pos, &angle);
-        draw_helicopter(pos, angle, heliService);
+        helicopter_place(k, &pos, &angle);
+        draw_helicopter(pos, angle, vehicles[k].service);
     }
 }
 
@@ -1428,9 +1517,10 @@ static void vehicle_glows(void)
         ambulance_place(k, &pos, &angle);
         glow(pos.x, pos.z, 3.0f, redOn ? (Color){ 255, 40, 40, 90 } : (Color){ 50, 110, 255, 90 });
     }
-    if (vehicles[HELI].state != V_IDLE) {
+    for (int k = HELI_FIRST; k < VEHICLES; k++) {
+        if (vehicles[k].state == V_IDLE) continue;
         Vector3 pos; float angle;
-        helicopter_place(&pos, &angle);
+        helicopter_place(k, &pos, &angle);
         if (pos.y < 8.0f) glow(HELI_X, HELI_Z, 2.6f, (Color){ 255, 255, 230, (unsigned char)(70 - pos.y * 8) });   // its searchlight
     }
 }
@@ -1577,9 +1667,22 @@ static Camera3D make_camera(void)
 // 2D labels on top of the 3D scene
 // ------------------------------------------------------------------------
 
-static void label(const char *text, Vector3 at, Camera3D cam, int size, Color fg, Color bg)
+// The labels and the HUD are drawn at the size they'd be in a 1000x600 window,
+// then scaled up by `ui` for bigger windows (full screen), so they stay the
+// same size on screen compared to everything else. hudW and hudH are the
+// window's size in those units.
+static float ui = 1.0f, hudW = SCREEN_W, hudH = SCREEN_H;
+
+// Where a point in the world is, in HUD units.
+static Vector2 to_hud(Vector3 at, Camera3D cam)
 {
     Vector2 s = GetWorldToScreen(at, cam);
+    return (Vector2){ s.x / ui, s.y / ui };
+}
+
+static void label(const char *text, Vector3 at, Camera3D cam, int size, Color fg, Color bg)
+{
+    Vector2 s = to_hud(at, cam);
     int w = MeasureText(text, size);
     DrawRectangleRounded((Rectangle){ s.x - w / 2 - 5, s.y - size / 2 - 3, w + 10, size + 6 },
                          0.5f, 6, bg);
@@ -1588,7 +1691,7 @@ static void label(const char *text, Vector3 at, Camera3D cam, int size, Color fg
 
 static void progress_bar(Vector3 at, Camera3D cam, float done, Color fill)
 {
-    Vector2 s = GetWorldToScreen(at, cam);
+    Vector2 s = to_hud(at, cam);
     Rectangle track = { s.x - 28, s.y, 56, 7 };
     DrawRectangleRounded(track, 1.0f, 6, (Color){ 0, 0, 0, 90 });
     if (done > 0.04f) {
@@ -1612,6 +1715,7 @@ static void bed_tooltip(const Sim *sim, int bed)
 {
     const Patient *p = sim->beds[bed].occupant;
     Vector2 m = GetMousePosition();
+    m = (Vector2){ m.x / ui, m.y / ui };
     const char *l1 = p ? TextFormat("Bed %d   Patient %d", bed + 1, p->id) : TextFormat("Bed %d", bed + 1);
     const char *l2 = p ? (p->condition ? TextFormat("%s (%s)", p->condition->name, p->condition->icd10)
                                        : "Condition not recorded")
@@ -1622,7 +1726,7 @@ static void bed_tooltip(const Sim *sim, int bed)
     if (MeasureText(l2, 16) > w) w = MeasureText(l2, 16);
     if (MeasureText(l3, 16) > w) w = MeasureText(l3, 16);
     Rectangle r = { m.x + 16, m.y + 12, w + 24, p ? 78 : 52 };
-    if (r.x + r.width > SCREEN_W - 8) r.x = m.x - r.width - 16;
+    if (r.x + r.width > hudW - 8) r.x = m.x - r.width - 16;
 
     DrawRectangleRounded(r, 0.2f, 8, C_CARD);
     DrawRectangleRoundedLines(r, 0.2f, 8, C_EDGE);
@@ -1648,7 +1752,7 @@ static void hud(const Sim *sim, float speed, bool paused)
     int hh, mm;
     sim_time_of_day(sim, &hh, &mm);
 
-    Rectangle card = { SCREEN_W - 230, 14, 216, 158 };
+    Rectangle card = { hudW - 230, 14, 216, 158 };
     DrawRectangleRounded(card, 0.12f, 8, night ? (Color){ 30, 38, 56, 230 } : (Color){ 255, 255, 255, 230 });
     int x = (int)card.x + 14, y = (int)card.y + 12;
     DrawText(TextFormat("%s  %02d:%02d", sim->shift == SHIFT_NIGHT ? "Night shift" : "Day shift", hh, mm),
@@ -1659,12 +1763,12 @@ static void hud(const Sim *sim, float speed, bool paused)
     DrawText(TextFormat("Doctors busy %d / %d", busyD, DOCTORS_ON(sim->shift)), x, y, 16, soft);  y += 22;
     DrawText(TextFormat("Speed        %.1fx", speed), x, y, 16, soft);
 
-    if (paused) DrawText("PAUSED", SCREEN_W / 2 - MeasureText("PAUSED", 30) / 2, 20, 30, C_EMERGENCY);
+    if (paused) DrawText("PAUSED", (int)hudW / 2 - MeasureText("PAUSED", 30) / 2, 20, 30, C_EMERGENCY);
 
     DrawText("0 A&E   1 Ward   2 X-ray   3 MRI   4 Bloods   5 Theatre   6 Nursery   7 Admin   8 Whole hospital   9 Helipad",
-             20, SCREEN_H - 50, 14, soft);
+             20, (int)hudH - 50, 14, soft);
     DrawText("V 2D view   Drag to turn   Right-drag to move   Scroll to zoom   SPACE pause   UP/DOWN speed   E emergency   H helicopter",
-             20, SCREEN_H - 30, 14, soft);
+             20, (int)hudH - 30, 14, soft);
 }
 
 // ------------------------------------------------------------------------
@@ -1709,11 +1813,16 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
                                     : v3(1.6f + k * 1.0f, 0, DESK_Z + 0.9f);
     }
 
-    ClearBackground(night ? (Color){ 16, 22, 36, 255 } : C_BG);
+    // The sky: a soft gradient, light blue by day and deep blue at night
+    Color skyTop    = night ? (Color){  8, 12, 30, 255 } : (Color){ 150, 195, 240, 255 };
+    Color skyBottom = night ? (Color){ 26, 34, 58, 255 } : (Color){ 232, 241, 250, 255 };
+    ClearBackground(skyBottom);
+    DrawRectangleGradientV(0, 0, GetScreenWidth(), GetScreenHeight(), skyTop, skyBottom);
 
     BeginMode3D(cam);
         rlDisableBackfaceCulling();          // so every face shows from both sides
 
+        draw_grounds();
         draw_room(sim);
         rooms3d_draw(sim, cam.position, cam.target);
         for (int i = 0; i < BED_COUNT; i++) {
@@ -1776,7 +1885,14 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         rlEnableBackfaceCulling();
     EndMode3D();
 
-    // Labels on top: bed numbers, progress, staff names, warnings
+    // Labels on top: bed numbers, progress, staff names, warnings. Drawn in
+    // HUD units and scaled up to the window by a 2D camera.
+    ui = fmaxf(1.0f, GetScreenHeight() / (float)SCREEN_H);
+    hudW = GetScreenWidth() / ui;
+    hudH = GetScreenHeight() / ui;
+    Camera2D hudCam = { 0 };
+    hudCam.zoom = ui;
+    BeginMode2D(hudCam);
     Color tagBg = night ? (Color){ 30, 38, 56, 210 } : (Color){ 255, 255, 255, 210 };
     Color tagFg = night ? (Color){ 225, 232, 245, 255 } : C_INK;
     int hoverBed = -1;
@@ -1813,6 +1929,6 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
 
     hud(sim, speed, paused);
     if (hoverBed != -1 && !IsMouseButtonDown(MOUSE_BUTTON_LEFT)) bed_tooltip(sim, hoverBed);
-    draw_rescue_banner(sim, SCREEN_W / 2, 72);      // e.g. "COAST GUARD RESCUE INBOUND"
-
+    draw_rescue_banner(sim, (int)hudW / 2, 72);     // e.g. "COAST GUARD RESCUE INBOUND"
+    EndMode2D();
 }

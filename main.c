@@ -18,12 +18,13 @@
 // in the department at 19:00 are handed over to the night shift.
 //
 // Controls: SPACE pause | UP/DOWN speed | E spawn emergency | R restart the day
-//           H helicopter rescue
+//           H helicopter rescue | F11 full screen on/off
 //           N continue to the next shift, L view patients treated (report screen)
 //           wheel or UP/DOWN scroll, B go back (patients-treated page)
 //           3D view: drag to turn, right-drag to move, scroll to zoom,
 //           0 A&E, 1-7 rooms, 8 whole hospital, 9 helipad and ambulance bay
  
+#include <math.h>
 #include "raylib.h"
 #include "sim.h"
 #include "draw.h"
@@ -32,9 +33,25 @@
 #include "view3d.h"
 #include "conditions.h"
  
+// The 2D screens are laid out for SCREEN_W x SCREEN_H. In a bigger window
+// they're scaled up to fit, centred, with the mouse scaled to match so the
+// buttons still work. The 3D view uses the whole window as it is.
+static Camera2D fit_screen(void)
+{
+    float scale = fminf((float)GetScreenWidth() / SCREEN_W, (float)GetScreenHeight() / SCREEN_H);
+    Camera2D cam = { 0 };
+    cam.zoom = scale;
+    cam.offset = (Vector2){ (GetScreenWidth() - SCREEN_W * scale) / 2, (GetScreenHeight() - SCREEN_H * scale) / 2 };
+    return cam;
+}
+
 int main(void)
 {
+    // Smooth edges in 3D, and a window that can be any size
+    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
     InitWindow(SCREEN_W, SCREEN_H, "Hospital Resource Simulator");
+    SetWindowMinSize(SCREEN_W / 2, SCREEN_H / 2);
+    ToggleBorderlessWindowed();          // start full screen; F11 switches back to a window
     SetTargetFPS(60);
  
     Image logo = LoadImage("logo.png");
@@ -55,6 +72,19 @@ int main(void)
     int logScroll = 0;         // first row shown on that page
  
     while (!WindowShouldClose()) {
+        if (IsKeyPressed(KEY_F11)) ToggleBorderlessWindowed();
+
+        // The 2D screens are scaled to fit the window; the mouse has to be too
+        bool in3d = !showRoster && !sim.shiftOver && view3d;
+        Camera2D fit = fit_screen();
+        if (in3d) {
+            SetMouseOffset(0, 0);
+            SetMouseScale(1.0f, 1.0f);
+        } else {
+            SetMouseOffset((int)-fit.offset.x, (int)-fit.offset.y);
+            SetMouseScale(1.0f / fit.zoom, 1.0f / fit.zoom);
+        }
+
         if (showRoster) {
             // Roster screen: wait for the shift to be started
             if (IsKeyPressed(KEY_N) || roster_start_clicked()) showRoster = false;
@@ -111,11 +141,17 @@ int main(void)
  
         // Draw
         BeginDrawing();
-        if (showRoster)                  draw_roster_screen(sim.day, sim.shift);
-        else if (sim.shiftOver && viewingLog) draw_patient_log(&sim, logScroll);
-        else if (sim.shiftOver)          draw_shift_report(&sim);
-        else if (view3d)                 view3d_draw(&sim, speed, paused);
-        else                             draw_frame(&sim, speed, paused);
+        if (!showRoster && !sim.shiftOver && view3d) {
+            view3d_draw(&sim, speed, paused);            // the whole window
+        } else {
+            fit = fit_screen();
+            BeginMode2D(fit);                            // 2D screens, scaled to fit
+            if (showRoster)                  draw_roster_screen(sim.day, sim.shift);
+            else if (sim.shiftOver && viewingLog) draw_patient_log(&sim, logScroll);
+            else if (sim.shiftOver)          draw_shift_report(&sim);
+            else                             draw_frame(&sim, speed, paused);
+            EndMode2D();
+        }
         EndDrawing();
     }
  

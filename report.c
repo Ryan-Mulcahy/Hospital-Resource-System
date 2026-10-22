@@ -164,13 +164,14 @@ void draw_shift_report(const Sim *sim)
  
 // Column x positions
 #define COL_ID         70
-#define COL_DOT       125
-#define COL_COND      140
-#define COL_ICD       365
-#define COL_ARRIVED   460
-#define COL_WAITED    535
-#define COL_OUT       625
-#define COL_BY        700
+#define COL_DOT       118
+#define COL_COND      132
+#define COL_ICD       320
+#define COL_ARRIVED   400
+#define COL_WAITED    465
+#define COL_OUT       540
+#define COL_BY        600
+#define COL_SENT      755    // where they went after A&E, as in the CSV
 #define COL_END       915
  
 static Rectangle back_button(void)
@@ -233,6 +234,7 @@ void draw_patient_log(const Sim *sim, int scroll)
     DrawText("Waited",     COL_WAITED,  hy, 14, C_MUTED);
     DrawText("Left",       COL_OUT,     hy, 14, C_MUTED);
     DrawText("Treated by", COL_BY,      hy, 14, C_MUTED);
+    DrawText("Sent to",    COL_SENT,    hy, 14, C_MUTED);
     DrawLine(COL_ID, hy + 22, COL_END, hy + 22, C_EDGE);
  
     if (count == 0) {
@@ -248,10 +250,11 @@ void draw_patient_log(const Sim *sim, int scroll)
  
         if (row % 2 == 1) DrawRectangle(COL_ID - 10, y - 3, COL_END - COL_ID + 20, LOG_ROW_H, C_BG);
  
-        char cond[CONDITION_NAME_LEN], code[ICD10_LEN], by[TREATED_BY_LEN];
+        char cond[CONDITION_NAME_LEN], code[ICD10_LEN], by[TREATED_BY_LEN], sent[PATHWAY_LEN];
         fit_text(cond, sizeof cond, r->condition->name,  COL_ICD - COL_COND - 12);
         fit_text(code, sizeof code, r->condition->icd10, COL_ARRIVED - COL_ICD - 8);
-        fit_text(by,   sizeof by,   r->treatedBy,       COL_END - COL_BY);
+        fit_text(by,   sizeof by,   r->treatedBy,       COL_SENT - COL_BY - 10);
+        fit_text(sent, sizeof sent, r->sentTo,          COL_END - COL_SENT);
  
         DrawText(TextFormat("%d", r->id), COL_ID, y, LOG_TEXT, C_INK);
         DrawCircle(COL_DOT, y + 8, 6, severity_dot(r->severity));
@@ -261,6 +264,7 @@ void draw_patient_log(const Sim *sim, int scroll)
         DrawText(TextFormat("%.0f min", sim_minutes(r->wait)), COL_WAITED, y, LOG_TEXT, C_INK);
         DrawText(hhmm(r->dischargeTime),    COL_OUT,     y, LOG_TEXT, C_INK);
         DrawText(by, COL_BY, y, LOG_TEXT, r->sawDoctor ? C_BRAND : C_INK);
+        DrawText(sent, COL_SENT, y, LOG_TEXT, (strcmp(r->sentTo, "Home") == 0) ? C_MUTED : C_INK);
     }
  
     // Scroll position and hints
