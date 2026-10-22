@@ -1,7 +1,8 @@
 // report.c - end-of-shift report: what happened during the shift, and how
 // busy the beds and nurses were. After the night shift it also shows
 // totals for the whole day. The report links to a second page listing
-// every patient treated during the shift (the treatment log).
+// every patient treated during the shift (the treatment log), and a third
+// showing how the equipment and the rooms after A&E were used.
  
 #include <stddef.h>
 #include <stdio.h>
@@ -17,15 +18,20 @@
 #define RIGHT_VALUE  870
 #define ROW          28
  
-// Report buttons: "View patients treated" on the left, continue on the right.
+// Report buttons: "Patients treated", "Equipment & rooms", and continue.
 static Rectangle view_log_button(void)
 {
-    return (Rectangle){ SCREEN_W / 2 - 250, 470, 240, 50 };
+    return (Rectangle){ SCREEN_W / 2 - 345, 470, 220, 50 };
+}
+
+static Rectangle equipment_button(void)
+{
+    return (Rectangle){ SCREEN_W / 2 - 110, 470, 220, 50 };
 }
  
 static Rectangle continue_button(void)
 {
-    return (Rectangle){ SCREEN_W / 2 + 10, 470, 240, 50 };
+    return (Rectangle){ SCREEN_W / 2 + 125, 470, 220, 50 };
 }
  
 static bool clicked(Rectangle r)
@@ -36,6 +42,7 @@ static bool clicked(Rectangle r)
  
 bool report_new_shift_clicked(void) { return clicked(continue_button()); }
 bool report_view_log_clicked(void)  { return clicked(view_log_button()); }
+bool report_view_equipment_clicked(void) { return clicked(equipment_button()); }
  
 // A rounded button with centred white text; darker while the mouse is over it.
 static void button(Rectangle b, const char *label, Color colour)
@@ -108,8 +115,9 @@ void draw_shift_report(const Sim *sim)
         TextFormat("%d", sim->waitingCount), LEFT_LABEL, LEFT_VALUE, y);                  y += ROW;
     row("Still in a bed", TextFormat("%d", inBeds), LEFT_LABEL, LEFT_VALUE, y);           y += ROW;
     row("Sent to a doctor", TextFormat("%d", s->sawDoctor), LEFT_LABEL, LEFT_VALUE, y);    y += ROW;
-    int tests = s->sentTo[ROOM_XRAY] + s->sentTo[ROOM_MRI] + s->sentTo[ROOM_BLOODS] + s->sentTo[ROOM_THEATRE];
-    row("Sent for tests / surgery", TextFormat("%d", tests), LEFT_LABEL, LEFT_VALUE, y);  y += ROW;
+    int tests = 0;                                     // every room after A&E except the ward
+    for (int r = 0; r < ROOM_TYPES; r++) if (r != ROOM_WARD) tests += s->sentTo[r];
+    row("Sent for tests / care", TextFormat("%d", tests), LEFT_LABEL, LEFT_VALUE, y);     y += ROW;
     row("Admitted to the ward", TextFormat("%d", s->sentTo[ROOM_WARD]), LEFT_LABEL, LEFT_VALUE, y); y += ROW;
     row("Helicopter rescues", TextFormat("%d", s->rescues), LEFT_LABEL, LEFT_VALUE, y);
     // Right column: waiting times and resource use
@@ -148,14 +156,107 @@ void draw_shift_report(const Sim *sim)
  
     // Buttons: view the treatment log, or continue to the next shift
     Rectangle v = view_log_button();
+    Rectangle e = equipment_button();
     Rectangle b = continue_button();
     button(v, "Patients treated", C_MUTED);
+    button(e, "Equipment & rooms", C_MUTED);
     button(b, "Continue", C_BRAND);
  
     const char *vHint = "or press L";
+    const char *eHint = "or press E";
     const char *bHint = "or press N";
     DrawText(vHint, (int)(v.x + v.width / 2 - MeasureText(vHint, 14) / 2), 530, 14, C_MUTED);
+    DrawText(eHint, (int)(e.x + e.width / 2 - MeasureText(eHint, 14) / 2), 530, 14, C_MUTED);
     DrawText(bHint, (int)(b.x + b.width / 2 - MeasureText(bHint, 14) / 2), 530, 14, C_MUTED);
+}
+
+// ---------------------------------------------------------------- equipment and rooms page
+
+bool report_equipment_back_clicked(void)
+{
+    return clicked((Rectangle){ SCREEN_W / 2 - 120, 520, 240, 44 });
+}
+
+// A small bar for a percentage, red when it's nearly always busy.
+static void percent_bar(int x, int y, int w, float pct)
+{
+    if (pct > 100) pct = 100;
+    DrawRectangle(x, y, w, 10, C_EDGE);
+    DrawRectangle(x, y, (int)(w * pct / 100.0f), 10, pct >= 85 ? C_EMERGENCY : pct >= 60 ? C_URGENT : C_ROUTINE);
+}
+
+void draw_equipment_report(const Sim *sim)
+{
+    const ShiftStats *s = &sim->stats;
+    bool night = (sim->shift == SHIFT_NIGHT);
+
+    ClearBackground(C_BG);
+    Rectangle card = { 40, 20, 920, 560 };
+    DrawRectangleRounded(card, 0.03f, 8, C_CARD);
+    DrawRectangleRoundedLines(card, 0.03f, 8, C_EDGE);
+    centered(TextFormat("EQUIPMENT AND ROOMS: %s SHIFT, DAY %d", night ? "NIGHT" : "DAY", sim->day), 38, 26, C_BRAND);
+    centered("How busy each one was, and how long patients waited for it", 72, 16, C_MUTED);
+
+    // Equipment: left
+    int x = 70, y = 110;
+    heading("EQUIPMENT", x, y);                                   y += 24;
+    DrawText("Item",          x,       y, 14, C_MUTED);
+    DrawText("Have",          x + 130, y, 14, C_MUTED);
+    DrawText("Busy",          x + 175, y, 14, C_MUTED);
+    DrawText("Most at once",  x + 285, y, 14, C_MUTED);
+    y += 22;
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        const Equipment *q = &sim->equipment[e];
+        float pct = 100.0f * s->equipBusyTime[e] / (q->total * SHIFT_LENGTH);
+        DrawRectangle(x, y + 3, 10, 10, draw_equipment_colour(e));
+        DrawText(sim_equipment_short(e), x + 16, y, 16, C_INK);
+        DrawText(TextFormat("%d", q->total), x + 140, y, 16, C_INK);
+        percent_bar(x + 175, y + 4, 60, pct);
+        DrawText(TextFormat("%.0f%%", pct), x + 242, y, 16, C_INK);
+        DrawText(TextFormat("%d", s->equipPeak[e]), x + 310, y, 16, s->equipPeak[e] >= q->total ? C_EMERGENCY : C_INK);
+        y += 24;
+    }
+    y += 16;
+    heading("WAITING FOR EQUIPMENT", x, y);                       y += 24;
+    DrawText("Item",            x,       y, 14, C_MUTED);
+    DrawText("Patients",        x + 130, y, 14, C_MUTED);
+    DrawText("Total",           x + 210, y, 14, C_MUTED);
+    DrawText("Longest",         x + 290, y, 14, C_MUTED);
+    y += 22;
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        DrawRectangle(x, y + 3, 10, 10, draw_equipment_colour(e));
+        DrawText(sim_equipment_short(e), x + 16, y, 16, C_INK);
+        Color c = s->equipWaits[e] > 0 ? C_EMERGENCY : C_INK;
+        DrawText(TextFormat("%d", s->equipWaits[e]), x + 150, y, 16, c);
+        DrawText(TextFormat("%.0f min", sim_minutes(s->equipWaitTotal[e])), x + 210, y, 16, C_INK);
+        DrawText(TextFormat("%.0f min", sim_minutes(s->equipLongestWait[e])), x + 290, y, 16, C_INK);
+        y += 24;
+    }
+
+    // Rooms: right
+    x = 500; y = 110;
+    heading("ROOMS AFTER A&E", x, y);                             y += 24;
+    DrawText("Room",          x,       y, 14, C_MUTED);
+    DrawText("Floor",         x + 115, y, 14, C_MUTED);
+    DrawText("Patients",      x + 160, y, 14, C_MUTED);
+    DrawText("Busy",          x + 235, y, 14, C_MUTED);
+    DrawText("Longest queue", x + 330, y, 14, C_MUTED);
+    y += 22;
+    for (int r = 0; r < ROOM_TYPES; r++) {
+        const SimRoom *room = &sim->rooms[r];
+        float pct = 100.0f * s->roomBusyTime[r] / (room->capacity * SHIFT_LENGTH);
+        int fl = sim_room_floor(r);
+        if (r % 2 == 1) DrawRectangle(x - 6, y - 2, 430, 21, C_BG);
+        DrawText(room->name, x, y, 16, C_INK);
+        DrawText(fl == 0 ? "G" : TextFormat("%d", fl), x + 125, y, 16, C_MUTED);
+        DrawText(TextFormat("%d", s->sentTo[r]), x + 175, y, 16, C_INK);
+        percent_bar(x + 235, y + 4, 50, pct);
+        DrawText(TextFormat("%.0f%%", pct), x + 290, y, 16, C_INK);
+        DrawText(TextFormat("%d", s->roomLongestQueue[r]), x + 360, y, 16, s->roomLongestQueue[r] >= 4 ? C_EMERGENCY : C_INK);
+        y += 21;
+    }
+
+    button((Rectangle){ SCREEN_W / 2 - 120, 520, 240, 44 }, "Back to report", C_BRAND);
 }
  
 // ---------------------------------------------------------------- treatment log page
@@ -253,7 +354,7 @@ void draw_patient_log(const Sim *sim, int scroll)
  
         if (row % 2 == 1) DrawRectangle(COL_ID - 10, y - 3, COL_END - COL_ID + 20, LOG_ROW_H, C_BG);
  
-        char cond[CONDITION_NAME_LEN], code[ICD10_LEN], by[TREATED_BY_LEN], sent[PATHWAY_LEN];
+        char cond[CONDITION_NAME_LEN], code[ICD10_LEN], by[TREATED_BY_LEN], sent[sizeof r->sentTo];
         fit_text(cond, sizeof cond, r->condition->name,  COL_ICD - COL_COND - 12);
         fit_text(code, sizeof code, r->condition->icd10, COL_ARRIVED - COL_ICD - 8);
         fit_text(by,   sizeof by,   r->treatedBy,       COL_SENT - COL_BY - 10);

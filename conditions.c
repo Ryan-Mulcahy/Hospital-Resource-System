@@ -13,19 +13,19 @@ static int count = 0;
 // Used when the file is missing or has nothing for a severity.
 // R69 is the ICD-10 code for "Illness, unspecified".
 static const Condition fallback[3] = {
-    { 1, "Unspecified emergency", "R69", "" },
-    { 2, "Unspecified urgent",    "R69", "" },
-    { 3, "Unspecified routine",   "R69", "" },
+    { 1, "Unspecified emergency", "R69", "", "monitor" },
+    { 2, "Unspecified urgent",    "R69", "", "" },
+    { 3, "Unspecified routine",   "R69", "", "" },
 };
 
 // Cases brought in by helicopter, and which service flies each one. All emergencies.
 static const struct { Condition condition; RescueService service; } rescues[] = {
-    { { 1, "Hypothermia (sea rescue)",           "T68",   "ward" },         SERVICE_COAST_GUARD },
-    { { 1, "Near drowning",                      "T75.1", "bloods+ward" },  SERVICE_COAST_GUARD },
-    { { 1, "Fall from height (mountain rescue)", "T14.9", "theatre+ward" }, SERVICE_SEARCH_RESCUE },
-    { { 1, "Multiple injuries (cliff fall)",     "T07",   "mri+theatre" },  SERVICE_SEARCH_RESCUE },
-    { { 1, "Burns (house fire)",                 "T30.0", "theatre+ward" }, SERVICE_FIRE },
-    { { 1, "Smoke inhalation (house fire)",      "J70.5", "xray+ward" },    SERVICE_FIRE },
+    { { 1, "Hypothermia (sea rescue)",           "T68",   "bloods+ward",      "monitor+drip" },            SERVICE_COAST_GUARD },
+    { { 1, "Near drowning",                      "T75.1", "xray+icu",         "monitor+ventilator" },      SERVICE_COAST_GUARD },
+    { { 1, "Fall from height (mountain rescue)", "T14.9", "ct+theatre+icu",   "monitor+drip+wheelchair" }, SERVICE_SEARCH_RESCUE },
+    { { 1, "Multiple injuries (cliff fall)",     "T07",   "ct+theatre+ward",  "monitor+drip+wheelchair" }, SERVICE_SEARCH_RESCUE },
+    { { 1, "Burns (house fire)",                 "T30.0", "theatre+icu",      "monitor+drip" },            SERVICE_FIRE },
+    { { 1, "Smoke inhalation (house fire)",      "J70.5", "xray+icu",         "monitor+ventilator" },      SERVICE_FIRE },
 };
 #define RESCUE_COUNT (int)(sizeof rescues / sizeof rescues[0])
 
@@ -55,19 +55,24 @@ int conditions_load(const char *filename)
 
     char line[256];
     while (count < MAX_CONDITIONS && fgets(line, sizeof line, f) != NULL) {
-        // Split the line at its commas: severity , name , code [, pathway]
+        // Split the line at its commas: severity , name , code [, pathway [, equipment]]
         char *comma1 = strchr(line, ',');
         char *comma2 = comma1 ? strchr(comma1 + 1, ',') : NULL;
         if (comma2 == NULL) continue;              // not three columns
         *comma1 = '\0';
         *comma2 = '\0';
         char *comma3 = strchr(comma2 + 1, ',');    // the pathway column, if there is one
-        const char *pathway = "";
+        const char *pathway = "", *equipment = "";
         if (comma3 != NULL) {
             *comma3 = '\0';
             pathway = skip_spaces(comma3 + 1);
-            char *comma4 = strchr(comma3 + 1, ',');   // ignore any extra columns
-            if (comma4 != NULL) *comma4 = '\0';
+            char *comma4 = strchr(comma3 + 1, ',');   // the equipment column, if there is one
+            if (comma4 != NULL) {
+                *comma4 = '\0';
+                equipment = skip_spaces(comma4 + 1);
+                char *comma5 = strchr(comma4 + 1, ',');   // ignore any extra columns
+                if (comma5 != NULL) *comma5 = '\0';
+            }
         }
 
         // strtol skips leading spaces; the header row ("severity") has no number
@@ -82,9 +87,11 @@ int conditions_load(const char *filename)
         snprintf(c.name,  sizeof c.name,  "%s", skip_spaces(comma1 + 1));
         snprintf(c.icd10, sizeof c.icd10, "%s", skip_spaces(comma2 + 1));
         snprintf(c.pathway, sizeof c.pathway, "%s", pathway);
+        snprintf(c.equipment, sizeof c.equipment, "%s", equipment);
         trim_end(c.name);
         trim_end(c.icd10);
         trim_end(c.pathway);
+        trim_end(c.equipment);
         if (c.name[0] == '\0') continue;
         table[count++] = c;
     }

@@ -35,6 +35,7 @@
 #include "draw.h"            // colours
 #include "view3d_parts.h"    // boxes, walls, people and signs from view3d.c
 #include "rooms3d.h"
+#include "floors3d.h"        // routes to the rooms upstairs
 
 // ------------------------------------------------------------------------
 // Layout (1 unit is roughly 1 metre)
@@ -342,6 +343,7 @@ static Vector3 slot_stand(RoomType r, int slot)
 
 int rooms3d_path(int room, int place, Vector3 *pts, int max)
 {
+    if (sim_room_floor(room) != 0) return floors3d_path(room, place, pts, max);   // upstairs
     RoomType r = (RoomType)room;
     int n = 0;
     #define ADD(p) do { if (n < max) pts[n++] = (p); } while (0)
@@ -385,6 +387,7 @@ static void draw_queues(void)
 {
     if (simNow == NULL) return;
     for (int r = 0; r < ROOM_TYPES; r++) {
+        if (sim_room_floor(r) != 0) continue;           // upstairs: floors3d.c draws those
         int k = 0;
         for (const Patient *p = simNow->rooms[r].queue; p != NULL && k < 5; p = p->next, k++) {
             if (view3d_patient_walking(p->id)) continue;
@@ -514,8 +517,7 @@ static void draw_shell(void)
     draw_box(v3(-9.35f, 0.45f, -4.5f), v3(0.42f, 0.08f, 1.30f), C_CHAIR);
     draw_box(v3(-9.35f, 0.22f, -5.0f), v3(0.36f, 0.42f, 0.08f), C_STEEL);
     draw_box(v3(-9.35f, 0.22f, -4.0f), v3(0.36f, 0.42f, 0.08f), C_STEEL);
-    draw_plant(-8.9f, 7.1f);
-    draw_plant(7.5f, -6.0f);
+    draw_plant(7.5f, -6.0f);         // (the end of the side corridor is the lifts now: floors3d.c)
 }
 
 // ------------------------------------------------------------------------
@@ -1082,6 +1084,34 @@ static void draw_admin(void)
 }
 
 // ------------------------------------------------------------------------
+// Pieces shared with floors3d.c (declared in view3d_parts.h)
+// ------------------------------------------------------------------------
+
+void part_box(Vector3 base, Facing f, float lx, float y, float lz, float sx, float sy, float sz, Color c)
+{
+    lbox(base, f, lx, y, lz, sx, sy, sz, c);
+}
+void part_shadow(Vector3 p, Facing f, float w, float d)          { lshadow(p, f, w, d); }
+void furniture_bed(Vector3 p, Facing f)                          { bed(p, f); }
+void furniture_chair(Vector3 p, Facing f, Color c)               { chair(p, f, c); }
+void furniture_computer(Vector3 p, Facing f, float deskY)        { computer(p, f, deskY); }
+void furniture_trolley(Vector3 p, Facing f, float w, float d)    { trolley(p, f, w, d); }
+void furniture_drip(float x, float z)                            { drip(x, z); }
+void furniture_desk(Vector3 p, bool mug)                         { desk(p, mug); }
+void furniture_bin(float x, float z, float h)                    { yellow_bin(x, z, h); }
+void floor_tiles(float x0, float z0, float x1, float z1, Color a, Color b) { floor_area(x0, z0, x1, z1, a, b); }
+void person_seated(Vector3 p, Facing f, Color top, Color legs, Color hair, bool typing)
+{
+    now = (float)GetTime();          // for the typing (rooms3d_draw may not have run this frame)
+    seated_person(p, f, top, legs, hair, typing);
+}
+void person_lying(Vector3 p, Facing f, float y, float lz, Color cover, Color hair)
+{
+    lying_person(p, f, y, lz, cover, hair);
+}
+void person_masked(Vector3 p, Facing f, Outfit o)                { draw_masked(p, f, o); }
+
+// ------------------------------------------------------------------------
 // The functions view3d.c calls
 // ------------------------------------------------------------------------
 
@@ -1203,6 +1233,7 @@ const char *rooms3d_name_at(float x, float z)
             return ROOMS[r].name;
         }
     }
+    if (x > WING_X && x < AE_LEFT_X && z > LIFT_DOOR_Z) return "LIFTS";
     if (x > EAST_X) return "AMBULANCE BAY";
     if (x >= WEST_X && z >= NORTH_Z && z <= SOUTH_Z) return "CORRIDOR";
     return "OUTSIDE";

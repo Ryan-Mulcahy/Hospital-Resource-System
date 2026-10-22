@@ -76,30 +76,50 @@ static void draw_waiting_room(const Sim *sim)
     }
 }
 
-// The rooms patients go to after A&E: who is in each, and how many are queuing.
+Color draw_equipment_colour(int e)
+{
+    static const Color colours[EQUIP_TYPES] = {
+        [EQUIP_MONITOR]    = {  40, 170, 160, 255 },   // teal
+        [EQUIP_VENTILATOR] = {  70, 120, 225, 255 },   // blue
+        [EQUIP_DEFIB]      = { 235, 100,  50, 255 },   // orange-red
+        [EQUIP_DRIP]       = { 155, 100, 205, 255 },   // purple
+        [EQUIP_WHEELCHAIR] = { 120, 110,  95, 255 },   // brown-grey
+    };
+    return (e >= 0 && e < EQUIP_TYPES) ? colours[e] : GRAY;
+}
+
+// The rooms patients go to after A&E: who is in each, and how many are
+// queuing. Two rows of seven; the small number in the corner is the floor
+// the room is on (G ground, 1 first, 2 second).
 static void draw_rooms(const Sim *sim)
 {
-    const int x0 = 25, y0 = 196, w = 104, h = 52, gap = 9;
+    const int x0 = 25, y0 = 190, w = 76, h = 36, gap = 5, perRow = 7;
 
-    DrawText("AFTER A&E", x0 + 15, y0 - 20, 14, t.muted);
+    DrawText("AFTER A&E", x0 + 15, y0 - 16, 14, t.muted);
     for (int r = 0; r < ROOM_TYPES; r++) {
         const SimRoom *room = &sim->rooms[r];
-        int x = x0 + r * (w + gap);
-        Rectangle card = { (float)x, (float)y0, (float)w, (float)h };
+        int x = x0 + (r % perRow) * (w + gap);
+        int y = y0 + (r / perRow) * (h + 4);
+        Rectangle card = { (float)x, (float)y, (float)w, (float)h };
         DrawRectangleRounded(card, 0.25f, 8, t.card);
         DrawRectangleRoundedLines(card, 0.25f, 8, t.edge);
-        DrawText(room->name, x + 8, y0 + 6, 14, t.ink);
+        int fl = sim_room_floor(r);
+        DrawText(fl == 0 ? "G" : TextFormat("%d", fl), x + w - 11, y + h - 13, 10, t.light);
+        const char *name = room->name;
+        int size = 12;
+        while (size > 8 && MeasureText(name, size) > w - 30) size--;
+        DrawText(name, x + 6, y + 4, size, t.ink);
 
         // A small dot for each place: filled in the patient's colour, or empty
         for (int s = 0; s < room->capacity; s++) {
-            int cx = x + 14 + s * 20, cy = y0 + 34;
+            int cx = x + 11 + s * 14, cy = y + 25;
             const Patient *p = room->in[s];
-            if (p) DrawCircle(cx, cy, 7, severity_color(p->severity));
-            else   DrawCircleLines(cx, cy, 7, t.light);
+            if (p) DrawCircle(cx, cy, 5, severity_color(p->severity));
+            else   DrawCircleLines(cx, cy, 5, t.light);
         }
         if (room->queueCount > 0) {
             const char *q = TextFormat("+%d", room->queueCount);
-            DrawText(q, x + w - 8 - MeasureText(q, 14), y0 + 6, 14, t.alert);   // queuing
+            DrawText(q, x + w - 5 - MeasureText(q, 12), y + 4, 12, t.alert);   // queuing
         }
     }
 }
@@ -107,9 +127,9 @@ static void draw_rooms(const Sim *sim)
 static void draw_beds(const Sim *sim)
 {
     // 8 beds and the resus bay, narrower cards so they all fit in a row
-    const int x0 = 40, y0 = 300, w = 62, h = 130, gap = 6;
+    const int x0 = 40, y0 = 306, w = 62, h = 130, gap = 6;
 
-    DrawText("WARD", x0, y0 - 35, 20, t.ink);
+    DrawText("WARD", x0, y0 - 30, 20, t.ink);
 
     for (int i = 0; i < BED_COUNT; i++) {
         int x = x0 + i * (w + gap);
@@ -130,13 +150,29 @@ static void draw_beds(const Sim *sim)
             continue;
         }
 
-        draw_patient_dot(p, x + w / 2, y0 + 62, 18, 15);
+        draw_patient_dot(p, x + w / 2, y0 + 58, 18, 15);
+
+        // The equipment they have with them: a small square in its colour,
+        // or an outline for what they still need
+        int nKit = 0;
+        for (int e = 0; e < EQUIP_TYPES; e++) if ((p->equipHeld | p->equipNeeds) & EQUIP_BIT(e)) nKit++;
+        int kx = x + w / 2 - (nKit * 10 - 2) / 2;
+        for (int e = 0; e < EQUIP_TYPES; e++) {
+            if (p->equipHeld & EQUIP_BIT(e))       { DrawRectangle(kx, y0 + 80, 8, 8, draw_equipment_colour(e)); kx += 10; }
+            else if (p->equipNeeds & EQUIP_BIT(e)) { DrawRectangleLines(kx, y0 + 80, 8, 8, draw_equipment_colour(e)); kx += 10; }
+        }
 
         // Who is with them. Red text means the progress bar is stalled.
         int n = sim_nurse_at(sim, i);
         int d = sim_doctor_at(sim, i);
         const char *who; Color col;
         if (p->walkLeft > 0.0f)  { who = "arriving";                         col = t.muted; }
+        else if (p->doneInAE)    { who = "needs chair";                      col = t.alert; }
+        else if (p->equipMissing) {
+            int e = 0;
+            while (e < EQUIP_TYPES - 1 && !(p->equipMissing & EQUIP_BIT(e))) e++;
+            who = TextFormat("no %s", sim_equipment_short(e));               col = t.alert;
+        }
         else if (d != -1)        { who = TextFormat("Dr %s", sim->doctors[d].name); col = t.ink; }
         else if (p->needsDoctor) { who = "needs Dr";                         col = t.alert; }
         else if (n != -1)        { who = sim->nurses[n].name;                col = C_BRAND; }
@@ -188,7 +224,7 @@ static void draw_nurses(const Sim *sim)
 
 static void draw_stats(const Sim *sim, float speed, bool paused)
 {
-    const int x = 680, y = 60, line = 30;
+    const int x = 680, y = 60, line = 23;
     int inBeds = 0;
     for (int i = 0; i < BED_COUNT; i++) {
         if (sim->beds[i].occupant != NULL) inBeds++;
@@ -205,7 +241,7 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
 
     float avgWait = (sim->stats.admitted > 0) ? sim->stats.totalWait / (float)sim->stats.admitted : 0.0f;
 
-    Rectangle panel = { x - 20, y - 20, 300, 430 };
+    Rectangle panel = { x - 20, y - 20, 300, 450 };
     DrawRectangleRounded(panel, 0.06f, 8, t.card);
     DrawRectangleRoundedLines(panel, 0.06f, 8, t.light);
 
@@ -216,20 +252,41 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     int hh, mm;
     sim_time_of_day(sim, &hh, &mm);
     DrawText(TextFormat("%s:  %02d:%02d", sim->shift == SHIFT_DAY ? "Day shift" : "Night shift", hh, mm),
-             x, y + 1 * line + 10, 18, t.ink);
-    DrawText(TextFormat("Waiting:    %d", sim->waitingCount),         x, y + 2 * line + 10, 18, t.ink);
-    DrawText(TextFormat("Beds used:  %d / %d", inBeds, BED_COUNT),    x, y + 3 * line + 10, 18, t.ink);
-    DrawText(TextFormat("Treated:    %d", sim->stats.treated),              x, y + 4 * line + 10, 18, t.ink);
-    DrawText(TextFormat("Avg wait:   %.1f s", avgWait),               x, y + 5 * line + 10, 18, t.ink);
-    DrawText(TextFormat("Nurses:    %d / %d", busyNurses, NURSES_ON(sim->shift)), x, y + 6 * line + 10, 18, t.ink);
+             x, y + 1 * line + 8, 16, t.ink);
+    DrawText(TextFormat("Waiting:    %d", sim->waitingCount),         x, y + 2 * line + 8, 16, t.ink);
+    DrawText(TextFormat("Beds used:  %d / %d", inBeds, BED_COUNT),    x, y + 3 * line + 8, 16, t.ink);
+    DrawText(TextFormat("Treated:    %d", sim->stats.treated),              x, y + 4 * line + 8, 16, t.ink);
+    DrawText(TextFormat("Avg wait:   %.1f s", avgWait),               x, y + 5 * line + 8, 16, t.ink);
+    DrawText(TextFormat("Nurses:    %d / %d", busyNurses, NURSES_ON(sim->shift)), x, y + 6 * line + 8, 16, t.ink);
 
-    DrawText(TextFormat("Doctors:    %d / %d", busyDoctors, DOCTORS_ON(sim->shift)), x, y + 7 * line + 10, 18, t.ink);
-    DrawText(TextFormat("In rooms:   %d", sim_patients_in_rooms(sim)), x, y + 8 * line + 10, 18, t.ink);
-    DrawText(TextFormat("Speed:      %.1fx", speed),                  x, y + 9 * line + 10, 18, t.ink);
+    DrawText(TextFormat("Doctors:    %d / %d", busyDoctors, DOCTORS_ON(sim->shift)), x, y + 7 * line + 8, 16, t.ink);
+    DrawText(TextFormat("In rooms:   %d", sim_patients_in_rooms(sim)), x, y + 8 * line + 8, 16, t.ink);
+    DrawText(TextFormat("Speed:      %.1fx", speed),                  x, y + 9 * line + 8, 16, t.ink);
 
-    DrawCircle(x + 8, y + 325, 8, C_EMERGENCY);     DrawText("Emergency", x + 24, y + 318, 16, t.ink);
-    DrawCircle(x + 8, y + 350, 8, C_URGENT);  DrawText("Urgent",    x + 24, y + 343, 16, t.ink);
-    DrawCircle(x + 8, y + 375, 8, C_ROUTINE);   DrawText("Routine",   x + 24, y + 368, 16, t.ink);
+    // Equipment: a bar for each kind, filled for the ones in use
+    int ey = y + 10 * line + 22;
+    DrawText("EQUIPMENT IN USE", x, ey, 14, t.muted);
+    ey += 20;
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        const Equipment *q = &sim->equipment[e];
+        int row = ey + e * 20;
+        DrawRectangle(x, row + 2, 10, 10, draw_equipment_colour(e));
+        DrawText(sim_equipment_short(e), x + 16, row, 14, t.ink);
+        // one block per item
+        for (int k = 0; k < q->total; k++) {
+            Rectangle b = { (float)(x + 110 + k * 16), (float)(row + 1), 13, 12 };
+            if (k < q->inUse) DrawRectangleRec(b, draw_equipment_colour(e));
+            else              DrawRectangleLinesEx(b, 1, t.light);
+        }
+        const char *c = TextFormat("%d/%d", q->inUse, q->total);
+        DrawText(c, x + 258 - MeasureText(c, 14), row, 14, q->inUse >= q->total ? t.alert : t.muted);
+    }
+
+    // The colours of the patients' dots, in one line
+    int ly = y + 405;
+    DrawCircle(x + 6, ly + 7, 6, C_EMERGENCY);  DrawText("Emergency", x + 16, ly, 14, t.ink);
+    DrawCircle(x + 104, ly + 7, 6, C_URGENT);   DrawText("Urgent",    x + 114, ly, 14, t.ink);
+    DrawCircle(x + 180, ly + 7, 6, C_ROUTINE);  DrawText("Routine",   x + 190, ly, 14, t.ink);
 
     if (paused) DrawText("PAUSED", x + 160, y, 20, t.alert);
 }

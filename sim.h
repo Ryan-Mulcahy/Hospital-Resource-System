@@ -28,7 +28,11 @@
 // Patients have to walk to their bed or room before anything starts there.
 // The 3D view times their walks to match these.
 #define WALK_TO_BED    3.0f      // seconds from the waiting room to an A&E bed
-#define WALK_TO_ROOM   6.0f      // seconds from A&E (or another room) to a room
+#define WALK_TO_ROOM   6.0f      // seconds from A&E (or another room) to a room on the ground floor
+#define WALK_PER_FLOOR 2.0f      // ...and this much longer for each floor up (the lift)
+
+// The hospital has three floors: 0 the ground floor (A&E), 1 and 2 upstairs.
+#define FLOORS 3
 
 // Helicopter rescues: 1 or 2 a shift. Rescued patients go to the front of the queue.
 #define RESCUE_CHANCE_SECOND 50  // % chance of a second rescue later in the shift
@@ -45,9 +49,32 @@ typedef enum { SHIFT_DAY, SHIFT_NIGHT } ShiftType;
 
 // The rooms patients can be sent to after A&E. Each takes a set number of
 // patients at once for a set time; anyone else waits in that room's queue.
-typedef enum { ROOM_XRAY, ROOM_MRI, ROOM_BLOODS, ROOM_THEATRE, ROOM_WARD, ROOM_TYPES } RoomType;
+// The first five are on the ground floor with A&E; the rest are upstairs.
+typedef enum {
+    ROOM_XRAY, ROOM_MRI, ROOM_BLOODS, ROOM_THEATRE, ROOM_WARD,          // ground floor
+    ROOM_CT, ROOM_ULTRASOUND, ROOM_CARDIO, ROOM_ICU, ROOM_PHARMACY,      // first floor
+    ROOM_MATERNITY, ROOM_CHILDREN, ROOM_PHYSIO, ROOM_DIALYSIS,          // second floor
+    ROOM_TYPES
+} RoomType;
 #define ROOM_NONE      -1
 #define ROOM_SLOTS_MAX  4        // the most patients any room holds at once
+
+// Equipment is shared round the hospital, and there isn't always enough.
+// A patient who needs something has to wait for it to be free:
+//   heart monitors, ventilators, defibrillators and drip pumps before their
+//     treatment in A&E starts (they give them back when it's done);
+//   a ventilator for every patient in ICU, for their whole stay;
+//   a wheelchair (and a porter) to take them from A&E to their first room,
+//     so a patient waiting for one is still using their A&E bed.
+typedef enum { EQUIP_MONITOR, EQUIP_VENTILATOR, EQUIP_DEFIB, EQUIP_DRIP, EQUIP_WHEELCHAIR, EQUIP_TYPES } EquipType;
+#define EQUIP_BIT(e) (1u << (e))
+
+typedef struct {
+    const char *name;        // "Heart monitor"
+    const char *key;         // "monitor": the word used in conditions.csv
+    int total;               // how many the hospital has
+    int inUse;               // how many are with a patient now
+} Equipment;
 
 typedef struct {
     const char *name;        // e.g. "X-ray"
@@ -80,7 +107,7 @@ typedef struct {
     int severity;                    // 1 = emergency, 2 = urgent, 3 = routine
     const Condition *condition;      // points into the conditions table (lives all run)
     char treatedBy[TREATED_BY_LEN];  // e.g. "Nurse Aoife Byrne", or "Nurse 2" before names
-    char sentTo[PATHWAY_LEN];        // rooms after A&E, e.g. "X-ray", or "Home"
+    char sentTo[PATHWAY_LEN + 16];   // rooms after A&E, e.g. "X-ray", or "Home"
     bool rescue;                     // came in by helicopter
     int rescueService;               // ...and which service brought them
     bool sawDoctor;                  // true if a nurse sent them to a doctor
@@ -106,6 +133,17 @@ typedef struct {
     int rescues;             // patients brought in by helicopter
     int surgeriesPlayed;     // operations done in the operation game (not practice)
     int complications;       // ...of those, the ones where you touched the edge or ran out of time
+
+    // Equipment
+    float equipBusyTime[EQUIP_TYPES];    // item-seconds in use (for the % busy)
+    int   equipPeak[EQUIP_TYPES];        // the most in use at once
+    int   equipWaits[EQUIP_TYPES];       // patients who had to wait for one
+    float equipWaitTotal[EQUIP_TYPES];   // seconds patients spent waiting for one
+    float equipLongestWait[EQUIP_TYPES]; // longest anyone waited for one
+
+    // The rooms after A&E
+    float roomBusyTime[ROOM_TYPES];      // place-seconds with a patient in them
+    int   roomLongestQueue[ROOM_TYPES];  // the longest each room's queue got
 } ShiftStats;
  
 typedef struct {
@@ -119,7 +157,8 @@ typedef struct {
     float nextRescue;        // clock time of the next helicopter rescue (< 0: none)
     int nextId;
 
-    SimRoom rooms[ROOM_TYPES];   // X-ray, MRI, bloods, theatre and the ward
+    SimRoom rooms[ROOM_TYPES];   // X-ray, MRI, bloods, theatre, the ward and the rooms upstairs
+    Equipment equipment[EQUIP_TYPES];   // monitors, ventilators, defibrillators, drip pumps, wheelchairs
  
     int day;                 // 1 for the first day, 2 for the next, ...
     ShiftType shift;         // which shift is on
@@ -159,6 +198,16 @@ void sim_surgery_result(Sim *sim, int id, bool won);
 
 // Patients in a room or waiting for one, across every room.
 int sim_patients_in_rooms(const Sim *sim);
+
+// Which floor a room is on (0 ground, 1 first, 2 second).
+int sim_room_floor(int room);
+
+// The equipment in a set of bits (EQUIP_BIT), as text: "monitor, drip pump",
+// or "" for none.
+void sim_equipment_text(unsigned bits, char *out, int size);
+
+// A short name for one piece of equipment, e.g. "Monitor", "Ventilator".
+const char *sim_equipment_short(int e);
 
 // The rooms a patient is going to, as text, e.g. "Theatre, Ward" or "Home".
 void sim_route_text(const Patient *p, char *out, int size);

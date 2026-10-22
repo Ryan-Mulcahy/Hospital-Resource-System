@@ -4,9 +4,12 @@
 // free nurse goes to the most urgent patient lying in a bed without one.
 //
 // After A&E, some patients are sent on to other rooms (X-ray, MRI, bloods,
-// theatre, the ward), depending on their condition. Each room takes a few
-// patients at a time; the rest queue for it. When they're done in their last
-// room they go home.
+// theatre, the ward, and the rooms upstairs), depending on their condition.
+// Each room takes a few patients at a time; the rest queue for it. When
+// they're done in their last room they go home.
+//
+// Equipment (monitors, ventilators, defibrillators, drip pumps, wheelchairs)
+// is shared: a patient who needs something waits until one is free.
  
 #include <stdio.h>           // snprintf, printf
 #include <stdlib.h>
@@ -34,13 +37,31 @@ static int random_severity(void)
  
 // ---- Rooms after A&E ----
 
-// Name, places, and simulated seconds per patient (1 second = 4 minutes)
-static const struct { const char *name, *key; int capacity; float duration; } ROOM_INFO[ROOM_TYPES] = {
-    [ROOM_XRAY]    = { "X-ray",   "xray",    1,  6.0f },   // 24 minutes on the table
-    [ROOM_MRI]     = { "MRI",     "mri",     1, 10.0f },   // 40 minutes in the scanner
-    [ROOM_BLOODS]  = { "Bloods",  "bloods",  2,  2.0f },   //  8 minutes
-    [ROOM_THEATRE] = { "Theatre", "theatre", 1, 15.0f },   // an hour
-    [ROOM_WARD]    = { "Ward",    "ward",    4, 30.0f },   // two hours on the ward
+// Name, places, simulated seconds per patient (1 second = 4 minutes), and floor
+static const struct { const char *name, *key; int capacity; float duration; int floor; } ROOM_INFO[ROOM_TYPES] = {
+    [ROOM_XRAY]       = { "X-ray",      "xray",       1,  6.0f, 0 },   // 24 minutes on the table
+    [ROOM_MRI]        = { "MRI",        "mri",        1, 10.0f, 0 },   // 40 minutes in the scanner
+    [ROOM_BLOODS]     = { "Bloods",     "bloods",     2,  2.0f, 0 },   //  8 minutes
+    [ROOM_THEATRE]    = { "Theatre",    "theatre",    1, 15.0f, 0 },   // an hour
+    [ROOM_WARD]       = { "Ward",       "ward",       4, 30.0f, 0 },   // two hours on the ward
+    [ROOM_CT]         = { "CT scan",    "ct",         1,  5.0f, 1 },   // 20 minutes
+    [ROOM_ULTRASOUND] = { "Ultrasound", "ultrasound", 1,  4.0f, 1 },   // 16 minutes
+    [ROOM_CARDIO]     = { "Cardiology", "cardio",     1, 12.0f, 1 },   // 48 minutes in the cath lab
+    [ROOM_ICU]        = { "ICU",        "icu",        4, 30.0f, 1 },   // two hours in intensive care
+    [ROOM_PHARMACY]   = { "Pharmacy",   "pharmacy",   2,  1.5f, 1 },   //  6 minutes to collect medicine
+    [ROOM_MATERNITY]  = { "Maternity",  "maternity",  2, 25.0f, 2 },   // 100 minutes: a baby is born
+    [ROOM_CHILDREN]   = { "Children",   "children",   3, 18.0f, 2 },   // 72 minutes on the children's ward
+    [ROOM_PHYSIO]     = { "Physio",     "physio",     2,  6.0f, 2 },   // 24 minutes of exercises
+    [ROOM_DIALYSIS]   = { "Dialysis",   "dialysis",   3, 16.0f, 2 },   // 64 minutes on the machine
+};
+
+// The equipment: name, the word for it in conditions.csv, and how many there are
+static const struct { const char *name, *shortName, *key; int total; } EQUIP_INFO[EQUIP_TYPES] = {
+    [EQUIP_MONITOR]    = { "Heart monitor", "Monitor",    "monitor",    4 },
+    [EQUIP_VENTILATOR] = { "Ventilator",    "Ventilator", "ventilator", 4 },
+    [EQUIP_DEFIB]      = { "Defibrillator", "Defib",      "defib",      1 },
+    [EQUIP_DRIP]       = { "Drip pump",     "Drip pump",  "drip",       4 },
+    [EQUIP_WHEELCHAIR] = { "Wheelchair",    "Wheelchair", "wheelchair", 2 },
 };
 
 static void rooms_init(Sim *sim)
@@ -51,32 +72,152 @@ static void rooms_init(Sim *sim)
         sim->rooms[r].capacity = ROOM_INFO[r].capacity;
         sim->rooms[r].duration = ROOM_INFO[r].duration;
     }
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        sim->equipment[e] = (Equipment){ EQUIP_INFO[e].name, EQUIP_INFO[e].key, EQUIP_INFO[e].total, 0 };
+    }
+}
+
+int sim_room_floor(int room)
+{
+    return (room >= 0 && room < ROOM_TYPES) ? ROOM_INFO[room].floor : 0;
+}
+
+const char *sim_equipment_short(int e)
+{
+    return (e >= 0 && e < EQUIP_TYPES) ? EQUIP_INFO[e].shortName : "";
+}
+
+void sim_equipment_text(unsigned bits, char *out, int size)
+{
+    int used = 0;
+    out[0] = '\0';
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        if (!(bits & EQUIP_BIT(e))) continue;
+        int n = snprintf(out + used, (size_t)(size - used), "%s%s", used ? ", " : "", EQUIP_INFO[e].name);
+        if (n < 0 || used + n >= size) break;
+        used += n;
+    }
+}
+
+// Read words joined with '+' (like "theatre+ward" or "monitor+drip"), and
+// call back with the index of each one found in `keys`. Unknown words are skipped.
+static int match_word(const char *s, const char *const *keys, int count)
+{
+    for (int i = 0; i < count; i++) {
+        size_t len = strlen(keys[i]);
+        // the whole word must match: "ct" mustn't match the start of "cardio"
+        if (strncmp(s, keys[i], len) == 0 && (s[len] == '\0' || s[len] == '+' || s[len] == ' ')) return i;
+    }
+    return -1;
 }
 
 // Read a pathway like "theatre+ward" into the patient's route. Unknown words
 // are skipped; "home" (or nothing) means no rooms at all.
 static void set_route(Patient *p, const char *pathway)
 {
-    p->route[0] = p->route[1] = ROOM_NONE;
+    const char *keys[ROOM_TYPES];
+    for (int r = 0; r < ROOM_TYPES; r++) keys[r] = ROOM_INFO[r].key;
+    for (int i = 0; i < ROUTE_MAX; i++) p->route[i] = ROOM_NONE;
     p->routeStep = 0;
     int n = 0;
     const char *s = pathway;
-    while (*s != '\0' && n < 2) {
-        for (int r = 0; r < ROOM_TYPES; r++) {
-            size_t len = strlen(ROOM_INFO[r].key);
-            if (strncmp(s, ROOM_INFO[r].key, len) == 0) { p->route[n++] = r; break; }
-        }
+    while (*s != '\0' && n < ROUTE_MAX) {
+        int r = match_word(s, keys, ROOM_TYPES);
+        if (r >= 0) p->route[n++] = r;
         const char *plus = strchr(s, '+');
         if (plus == NULL) break;
         s = plus + 1;
     }
 }
 
+// Read the equipment a condition needs, like "monitor+drip", into bits.
+static unsigned equipment_needed(const char *list)
+{
+    const char *keys[EQUIP_TYPES];
+    for (int e = 0; e < EQUIP_TYPES; e++) keys[e] = EQUIP_INFO[e].key;
+    unsigned bits = 0;
+    const char *s = list;
+    while (*s != '\0') {
+        int e = match_word(s, keys, EQUIP_TYPES);
+        if (e >= 0) bits |= EQUIP_BIT(e);
+        const char *plus = strchr(s, '+');
+        if (plus == NULL) break;
+        s = plus + 1;
+    }
+    return bits;
+}
+
+// Set the condition-dependent parts of a new patient: route and equipment.
+static void set_condition(Patient *p, const Condition *c)
+{
+    p->condition = c;
+    set_route(p, c->pathway);
+    p->equipNeeds = equipment_needed(c->equipment);
+}
+
 void sim_route_text(const Patient *p, char *out, int size)
 {
     if (p->route[0] == ROOM_NONE) { snprintf(out, (size_t)size, "Home"); return; }
-    if (p->route[1] == ROOM_NONE) snprintf(out, (size_t)size, "%s", ROOM_INFO[p->route[0]].name);
-    else snprintf(out, (size_t)size, "%s, %s", ROOM_INFO[p->route[0]].name, ROOM_INFO[p->route[1]].name);
+    int used = 0;
+    out[0] = '\0';
+    for (int i = 0; i < ROUTE_MAX && p->route[i] != ROOM_NONE; i++) {
+        int n = snprintf(out + used, (size_t)(size - used), "%s%s", i ? ", " : "", ROOM_INFO[p->route[i]].name);
+        if (n < 0 || used + n >= size) break;
+        used += n;
+    }
+}
+
+// ---- Equipment ----
+
+// Take every piece of equipment in `bits` for the patient, or none of it: if
+// any of it isn't free, they get nothing and wait (so nobody holds half of
+// what they need, and nobody can get stuck waiting on each other).
+static bool take_equipment(Sim *sim, Patient *p, unsigned bits)
+{
+    unsigned missing = 0;
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        if ((bits & EQUIP_BIT(e)) && sim->equipment[e].inUse >= sim->equipment[e].total) missing |= EQUIP_BIT(e);
+    }
+    if (missing != 0) {
+        // Count each patient once for each thing they end up waiting for
+        for (int e = 0; e < EQUIP_TYPES; e++) {
+            if ((missing & EQUIP_BIT(e)) && !(p->equipMissing & EQUIP_BIT(e))) sim->stats.equipWaits[e]++;
+        }
+        if (p->equipMissing == 0) p->equipWaitStart = sim->clock;
+        p->equipMissing |= missing;
+        return false;
+    }
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        if (!(bits & EQUIP_BIT(e))) continue;
+        sim->equipment[e].inUse++;
+        if (sim->equipment[e].inUse > sim->stats.equipPeak[e]) sim->stats.equipPeak[e] = sim->equipment[e].inUse;
+    }
+    p->equipHeld |= bits;
+    if (p->equipMissing != 0) {                  // they had been waiting
+        float wait = sim->clock - p->equipWaitStart;
+        for (int e = 0; e < EQUIP_TYPES; e++) {
+            if (!(p->equipMissing & EQUIP_BIT(e))) continue;
+            if (wait > sim->stats.equipLongestWait[e]) sim->stats.equipLongestWait[e] = wait;
+        }
+        p->equipMissing = 0;
+        p->equipWaitStart = -1.0f;
+    }
+    return true;
+}
+
+// Give back the equipment in `bits` that the patient has.
+static void give_back(Sim *sim, Patient *p, unsigned bits)
+{
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        if ((bits & p->equipHeld & EQUIP_BIT(e)) && sim->equipment[e].inUse > 0) sim->equipment[e].inUse--;
+    }
+    p->equipHeld &= ~bits;
+}
+
+// The patient has got where they were walking to: the porter takes the wheelchair back.
+static void arrived(Sim *sim, Patient *p)
+{
+    give_back(sim, p, EQUIP_BIT(EQUIP_WHEELCHAIR));
 }
 
 int sim_patients_in_rooms(const Sim *sim)
@@ -92,12 +233,13 @@ int sim_patients_in_rooms(const Sim *sim)
 // Send a patient on to the next room on their route, or home (freed).
 static void send_on(Sim *sim, Patient *p)
 {
-    int r = (p->routeStep < 2) ? p->route[p->routeStep] : ROOM_NONE;
+    int r = (p->routeStep < ROUTE_MAX) ? p->route[p->routeStep] : ROOM_NONE;
     if (r == ROOM_NONE) {
+        give_back(sim, p, p->equipHeld);
         free(p);
         return;
     }
-    p->walkLeft = WALK_TO_ROOM;               // the walk there from where they are
+    p->walkLeft = WALK_TO_ROOM + WALK_PER_FLOOR * ROOM_INFO[r].floor;   // the walk there (and the lift up)
     queue_insert(&sim->rooms[r].queue, p);   // most urgent first
     sim->rooms[r].queueCount++;
     sim->stats.sentTo[r]++;
@@ -109,25 +251,39 @@ static void update_rooms(Sim *sim, float dt)
 {
     for (int r = 0; r < ROOM_TYPES; r++) {
         SimRoom *room = &sim->rooms[r];
+        int busy = 0;
         for (int s = 0; s < room->capacity; s++) {
             Patient *p = room->in[s];
             if (p == NULL) continue;
-            if (p->walkLeft > 0.0f) { p->walkLeft -= dt; continue; }   // still walking there
+            busy++;
+            if (p->walkLeft > 0.0f) {                                  // still walking there
+                p->walkLeft -= dt;
+                if (p->walkLeft <= 0.0f) arrived(sim, p);
+                continue;
+            }
             p->roomLeft -= dt;
             if (p->roomLeft > 0.0f) continue;
             room->in[s] = NULL;
+            if (r == ROOM_ICU) give_back(sim, p, EQUIP_BIT(EQUIP_VENTILATOR));   // ICU's ventilator stays in ICU
             p->routeStep++;
-            bool last = (p->routeStep >= 2 || p->route[p->routeStep] == ROOM_NONE);
+            bool last = (p->routeStep >= ROUTE_MAX || p->route[p->routeStep] == ROOM_NONE);
             if (last) sim->stats.leftHospital++;
             send_on(sim, p);
         }
+        sim->stats.roomBusyTime[r] += busy * dt;
+        if (room->queueCount > sim->stats.roomLongestQueue[r]) sim->stats.roomLongestQueue[r] = room->queueCount;
         for (Patient *q = room->queue; q != NULL; q = q->next) {   // walking to the queue
-            if (q->walkLeft > 0.0f) q->walkLeft -= dt;
+            if (q->walkLeft > 0.0f) {
+                q->walkLeft -= dt;
+                if (q->walkLeft <= 0.0f) arrived(sim, q);
+            }
         }
         for (int s = 0; s < room->capacity; s++) {
             if (room->in[s] != NULL) continue;
+            if (room->queue == NULL) break;
+            // Every bed in ICU needs a ventilator: no ventilator, no place
+            if (r == ROOM_ICU && !take_equipment(sim, room->queue, EQUIP_BIT(EQUIP_VENTILATOR))) break;
             Patient *p = queue_pop(&room->queue);
-            if (p == NULL) break;
             room->queueCount--;
             p->roomLeft = room->duration * (0.8f + (float)GetRandomValue(0, 40) / 100.0f);
             // The scan or stay starts once they get there: the rest of their walk,
@@ -162,12 +318,15 @@ void sim_add_patient(Sim *sim, int severity)
     p->assessLeft = ASSESS_TIME;
     p->waitedFor = 0.0f;
     p->needsDoctor = false;
-    p->condition = conditions_random(severity);
     p->rescue = false;
     p->rescueService = 0;
     p->roomLeft = 0.0f;
     p->walkLeft = 0.0f;
-    set_route(p, p->condition->pathway);
+    p->equipHeld = 0;
+    p->equipMissing = 0;
+    p->equipWaitStart = -1.0f;
+    p->doneInAE = false;
+    set_condition(p, conditions_random(severity));
     p->next = NULL;
  
     queue_insert(&sim->waiting, p);
@@ -189,9 +348,8 @@ void sim_add_rescue(Sim *sim)
 
     p->rescue = true;
     RescueService service;
-    p->condition = conditions_rescue(&service);
+    set_condition(p, conditions_rescue(&service));
     p->rescueService = (int)service;
-    set_route(p, p->condition->pathway);
     p->treatmentTotal = 9.0f + (float)GetRandomValue(0, 20) / 10.0f;
     p->treatmentLeft = p->treatmentTotal;
     sim->stats.rescues++;
@@ -275,7 +433,7 @@ static int bed_needing_nurse(const Sim *sim)
     int best = -1;
     for (int i = 0; i < BED_COUNT; i++) {
         const Patient *p = sim->beds[i].occupant;
-        if (p == NULL || p->needsDoctor || sim_nurse_at(sim, i) != -1) continue;
+        if (p == NULL || p->needsDoctor || p->doneInAE || sim_nurse_at(sim, i) != -1) continue;
  
         if (best == -1) { best = i; continue; }
         const Patient *b = sim->beds[best].occupant;
@@ -294,7 +452,7 @@ static int bed_needing_doctor(const Sim *sim)
     int best = -1;
     for (int i = 0; i < BED_COUNT; i++) {
         const Patient *p = sim->beds[i].occupant;
-        if (p == NULL || !p->needsDoctor || sim_doctor_at(sim, i) != -1) continue;
+        if (p == NULL || !p->needsDoctor || p->doneInAE || sim_doctor_at(sim, i) != -1) continue;
  
         if (best == -1) { best = i; continue; }
         const Patient *b = sim->beds[best].occupant;
@@ -456,6 +614,60 @@ static void end_shift(Sim *sim)
     }
 }
  
+// Equipment the patient still needs before treatment can start (the
+// wheelchair is for leaving, so it isn't counted here).
+static unsigned still_needs(const Patient *p)
+{
+    return p->equipNeeds & ~EQUIP_BIT(EQUIP_WHEELCHAIR) & ~p->equipHeld;
+}
+
+// Patients who can't walk need a wheelchair (and a porter) to get to their
+// first room. Going home, their family takes them.
+static bool needs_wheelchair_to_leave(const Patient *p)
+{
+    return (p->equipNeeds & EQUIP_BIT(EQUIP_WHEELCHAIR)) && p->route[0] != ROOM_NONE;
+}
+
+// Is someone with this patient, ready to treat them?
+static bool staff_with(const Sim *sim, int bed, const Patient *p)
+{
+    return p->needsDoctor ? sim_doctor_at(sim, bed) != -1 : sim_nurse_at(sim, bed) != -1;
+}
+
+// Hand out equipment to patients who are ready for treatment (in their bed,
+// assessed, with their nurse or doctor) but don't have what they need yet,
+// most urgent first (earliest arrival breaks ties).
+static void equipment_round(Sim *sim)
+{
+    int order[BED_COUNT], n = 0;
+    for (int i = 0; i < BED_COUNT; i++) {
+        const Patient *p = sim->beds[i].occupant;
+        if (p == NULL || p->doneInAE || p->walkLeft > 0.0f || p->assessLeft > 0.0f) continue;
+        if (!staff_with(sim, i, p) || still_needs(p) == 0) continue;
+        // insertion sort into order[], most urgent first
+        int k = n++;
+        while (k > 0) {
+            const Patient *q = sim->beds[order[k - 1]].occupant;
+            if (q->severity < p->severity || (q->severity == p->severity && q->arrivalTime <= p->arrivalTime)) break;
+            order[k] = order[k - 1];
+            k--;
+        }
+        order[k] = i;
+    }
+    for (int k = 0; k < n; k++) {
+        Patient *p = sim->beds[order[k]].occupant;
+        take_equipment(sim, p, still_needs(p));
+    }
+}
+
+// A patient leaves their A&E bed for their first room, or home.
+static void leave_bed(Sim *sim, int bed)
+{
+    Patient *p = sim->beds[bed].occupant;
+    sim->beds[bed].occupant = NULL;
+    send_on(sim, p);
+}
+
 void sim_update(Sim *sim, float dt)
 {
     if (sim->shiftOver) return;
@@ -482,13 +694,24 @@ void sim_update(Sim *sim, float dt)
         }
     }
  
-        // 2. Assessment and treatment.
+    // 2. Equipment for the patients who are ready to be treated
+    equipment_round(sim);
+
+        // 3. Assessment and treatment.
     //    A nurse assesses every patient first. If they need a doctor the nurse
     //    leaves and a doctor treats them; otherwise the nurse stays and treats
-    //    them. When treatment finishes, the bed and whoever treated them are freed.
+    //    them. Treatment only starts once they have the equipment they need.
+    //    When it finishes, whoever treated them is freed and the equipment
+    //    goes back; the bed is freed when they leave (which may mean waiting
+    //    for a wheelchair).
     for (int i = 0; i < BED_COUNT; i++) {
         Patient *p = sim->beds[i].occupant;
         if (p == NULL) continue;
+
+        if (p->doneInAE) {                  // treated: waiting for a wheelchair to take them on
+            if (take_equipment(sim, p, EQUIP_BIT(EQUIP_WHEELCHAIR))) leave_bed(sim, i);
+            continue;
+        }
  
         int n = sim_nurse_at(sim, i);
         int d = sim_doctor_at(sim, i);
@@ -510,6 +733,7 @@ void sim_update(Sim *sim, float dt)
  
         if (p->needsDoctor && d == -1) continue;   // waiting for a doctor
         if (!p->needsDoctor && n == -1) continue;  // waiting for a nurse (theirs went home)
+        if (still_needs(p) != 0) continue;         // waiting for equipment
  
         p->treatmentLeft -= dt;
         if (p->treatmentLeft <= 0.0f) {
@@ -522,16 +746,19 @@ void sim_update(Sim *sim, float dt)
  
             if (p->needsDoctor) sim->doctors[d].busyWithBed = -1;
             else                sim->nurses[n].busyWithBed = -1;
-            sim->beds[i].occupant = NULL;
             sim->stats.treated++;
-            send_on(sim, p);             // on to their first room, or home
+            give_back(sim, p, p->equipHeld);     // the equipment goes back for the next patient
+            p->doneInAE = true;
+            // On to their first room, or home; in a wheelchair if they need one
+            if (needs_wheelchair_to_leave(p) && !take_equipment(sim, p, EQUIP_BIT(EQUIP_WHEELCHAIR))) continue;
+            leave_bed(sim, i);
         }
     }
  
-    // 2b. The rooms after A&E
+    // 3b. The rooms after A&E
     update_rooms(sim, dt);
  
-    // 3. Admission: every free bed takes the most urgent waiting patient. The
+    // 4. Admission: every free bed takes the most urgent waiting patient. The
     //    resus bay is tried first but only takes emergencies; the queue is
     //    sorted most urgent first, so if the front of it isn't an emergency
     //    nobody waiting is, and the resus bay stays free for the next one.
@@ -553,7 +780,7 @@ void sim_update(Sim *sim, float dt)
         if (wait > sim->stats.longestWait) sim->stats.longestWait = wait;
     }
  
-    // 4. Nurse rounds: every free nurse goes to the most urgent untreated bed
+    // 5. Nurse rounds: every free nurse goes to the most urgent untreated bed
     for (int d = 0; d < NURSES_ON(sim->shift); d++) {
         if (sim->nurses[d].busyWithBed != -1) continue;
  
@@ -563,7 +790,7 @@ void sim_update(Sim *sim, float dt)
         sim->nurses[d].busyWithBed = bed;
     }
  
-        // 5. Doctor rounds: every free doctor goes to the most urgent patient
+        // 6. Doctor rounds: every free doctor goes to the most urgent patient
     //    a nurse has sent to a doctor
     for (int d = 0; d < DOCTORS_ON(sim->shift); d++) {
         if (sim->doctors[d].busyWithBed != -1) continue;
@@ -574,9 +801,21 @@ void sim_update(Sim *sim, float dt)
         sim->doctors[d].busyWithBed = bed;
     }
  
-    // 6. Resource usage for the end-of-shift report
+    // 7. Resource usage for the end-of-shift report
     for (int i = 0; i < BED_COUNT; i++) {
         if (sim->beds[i].occupant != NULL) sim->stats.bedBusyTime += dt;
+    }
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        sim->stats.equipBusyTime[e] += sim->equipment[e].inUse * dt;
+    }
+    // Time spent waiting for equipment: patients in beds, and in the ICU queue
+    for (int i = 0; i < BED_COUNT; i++) {
+        const Patient *p = sim->beds[i].occupant;
+        if (p == NULL) continue;
+        for (int e = 0; e < EQUIP_TYPES; e++) if (p->equipMissing & EQUIP_BIT(e)) sim->stats.equipWaitTotal[e] += dt;
+    }
+    for (const Patient *p = sim->rooms[ROOM_ICU].queue; p != NULL; p = p->next) {
+        for (int e = 0; e < EQUIP_TYPES; e++) if (p->equipMissing & EQUIP_BIT(e)) sim->stats.equipWaitTotal[e] += dt;
     }
     for (int d = 0; d < NURSE_COUNT; d++) {
         if (sim->nurses[d].busyWithBed != -1) sim->stats.nurseBusyTime += dt;

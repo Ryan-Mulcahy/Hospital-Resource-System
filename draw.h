@@ -31,4 +31,8 @@ void draw_frame(const Sim *sim, float speed, bool paused);
 // Returns true on the frame a new rescue is first seen.
 bool draw_rescue_banner(const Sim *sim, int centreX, int y);
 
+// The colour for each piece of equipment (EquipType), the same in 2D and 3D.
+Color draw_equipment_colour(int e);
+
 #endif
+

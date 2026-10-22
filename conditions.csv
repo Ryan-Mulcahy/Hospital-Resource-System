@@ -1,16 +1,32 @@
-severity,condition,icd10,pathway
-1,Cardiac arrest,I46.9,bloods+ward
-1,Sepsis,A41.9,bloods+ward
-1,Stroke,I63.9,mri+ward
-1,Burst appendix,K35.2,theatre+ward
-1,Head injury (car crash),S06.9,mri+theatre
-2,Chest pain,R07.9,bloods
-2,Asthma attack,J45.901,home
-2,Broken wrist,S62.90,xray
-2,Kidney stone,N20.0,xray
-2,Severe headache,R51,home
-3,Ankle sprain,S93.409A,xray
-3,Cut hand,S61.419A,home
-3,Ear infection,H66.90,home
-3,Back pain,M54.5,home
-3,Dizziness,R42,home
+severity,condition,icd10,pathway,equipment
+1,Cardiac arrest,I46.9,bloods+ward,monitor+defib+ventilator
+1,Sepsis,A41.9,bloods+ward,monitor+drip
+1,Stroke,I63.9,mri+ward,monitor
+1,Burst appendix,K35.2,theatre+ward,monitor+drip
+1,Head injury (car crash),S06.9,mri+theatre,monitor+ventilator+wheelchair
+1,Heart attack,I21.9,cardio+icu,monitor+defib+drip
+1,Overdose,T50.9,bloods+icu,monitor+ventilator+drip
+1,Internal bleeding,K92.2,ct+theatre+icu,monitor+drip
+1,Labour with complications,O75.9,ultrasound+maternity,monitor+drip
+2,Chest pain,R07.9,bloods,monitor
+2,Asthma attack,J45.901,home,monitor
+2,Broken wrist,S62.90,xray,
+2,Kidney stone,N20.0,xray,drip
+2,Severe headache,R51,home,
+2,Pneumonia,J18.9,xray+pharmacy,drip
+2,Broken hip,S72.0,xray+theatre+physio,wheelchair
+2,Kidney failure,N17.9,bloods+dialysis,monitor+drip
+2,Child with high fever,R50.9,bloods+children,drip
+2,Labour,O80,maternity,
+2,Gallstones,K80.2,ultrasound+pharmacy,drip
+2,Irregular heartbeat,I49.9,cardio+pharmacy,monitor
+3,Ankle sprain,S93.409A,xray,wheelchair
+3,Cut hand,S61.419A,home,
+3,Ear infection,H66.90,home,
+3,Back pain,M54.5,home,
+3,Dizziness,R42,home,
+3,Chest infection,J22,pharmacy,
+3,Skin rash,R21,pharmacy,
+3,Sprained knee,S83.6,physio,wheelchair
+3,Child with a broken arm,S52.9,xray+children,wheelchair
+3,Pregnancy check,Z34.9,ultrasound,

@@ -16,6 +16,18 @@
 //           rooms3d.c draws (ward, X-ray, MRI, bloods, theatre, nursery, admin)
 //   outside: two ambulance bays with a road out, and a helipad
 //
+// The hospital has three floors. PAGE UP / PAGE DOWN (or F) moves the view
+// up and down: the floors above the one you're looking at are hidden, and
+// the ones below are drawn closed up from outside (outside3d.c). Above the
+// top floor is the view of the whole building from outside, with its roof.
+// floors3d.c draws the floors upstairs and the lifts; patients going to a
+// room upstairs walk to the lifts and ride up.
+//
+// Equipment (monitors, ventilators, defibrillators, drip pumps and
+// wheelchairs) is drawn where it is: by the bed of the patient who has it,
+// or parked in the equipment bay in A&E when it's free. Patients who need a
+// wheelchair are pushed to their room by a porter.
+//
 // Every patient is followed from frame to frame: when the simulation moves
 // them (into a chair, a bed, a room, or home) they walk there. Emergencies
 // arrive by ambulance, which drives in, reverses into a bay and leaves again;
@@ -37,6 +49,8 @@
 #include "rooms3d.h"        // the rest of the hospital
 #include "sound.h"          // the door chime, helicopter blades and rain
 #include "opgame.h"         // the "SURGERY READY" banner
+#include "floors3d.h"       // the floors upstairs, and the lifts
+#include "outside3d.h"      // the grounds, and the building seen from outside
 
 // ---- Layout ----
 #define BED_Z        -3.2f   // the row of beds along the back wall
@@ -78,6 +92,14 @@ static Vector3 camTarget = { 3.0f, 0.4f, 0.9f };   // the point the camera looks
 static bool    gliding = false;
 static Vector3 goalTarget;
 static float   goalYaw, goalPitch, goalDist;
+
+// ---- Which floor is being looked at ----
+// 0 ground, 1 first, 2 second, VIEW_OUTSIDE the whole building from outside
+static int viewFloor = 0;
+
+// ---- The lift: the height of its floor, and how open the doors are on each floor ----
+static float liftCarY = 0.0f;
+static float liftDoors[FLOORS];
 
 // ---- Where each member of staff is standing; they walk between spots ----
 static Vector3 nursePos[NURSE_COUNT];
@@ -139,6 +161,7 @@ typedef struct {
     int next;                    // the point they are walking to
     float walkSpeed;             // metres per second at 1x speed for this walk
     float phase;                 // for swinging arms and legs
+    bool chair;                  // in a wheelchair, pushed by a porter
 } Tracked;
 
 static Tracked tracked[MAX_TRACKED];
@@ -195,7 +218,7 @@ static RenderTexture2D bedScreen[BED_COUNT];
 // ---- Signs with text on them, made once ----
 static bool signsReady = false;
 static RenderTexture2D signWard, signWaiting, signEmergency, signStation,
-                       signReception, signAmbulance, tvScreen;
+                       signReception, signAmbulance, signEquipment, tvScreen;
 
 // ---- Walls that face the camera are drawn low, so they never block the view ----
 static bool lowBack, lowLeft, lowRight;
@@ -483,7 +506,7 @@ static void draw_sky_objects(Camera3D cam)
 // Inside the hospital building? (No rain falls there.)
 static bool indoors(float x, float z)
 {
-    return x > -16.8f && x < 8.4f && z > -13.3f && z < 7.8f && !(x > -8.0f && z > 6.4f);
+    return x > -16.8f && x < 8.4f && z > -13.3f && z < 7.8f;   // (the floors upstairs overhang A&E's front)
 }
 
 // Puddles outside: on the grass, the path, the road and round the helipad.
@@ -548,11 +571,17 @@ static void draw_rain(Camera3D cam)
 // Street lamps along the road and the path to the doors. They come on at dusk.
 static const float LAMPS[][2] = {
     { 19.2f, -10.0f }, { 19.2f, -3.0f }, { 19.2f, 4.0f }, { 19.2f, 11.0f }, { 19.2f, 18.0f },
-    { 13.55f, 10.5f }, { 13.55f, 16.0f },
+    { 13.55f, 10.5f }, { 13.55f, 18.6f },
 };
 #define LAMP_COUNT ((int)(sizeof LAMPS / sizeof LAMPS[0]))
 
 static bool lamps_on(void) { return darkness > 0.35f; }
+
+// For the other 3D files: the light, the clock and the weather
+float view3d_darkness(void) { return darkness; }
+bool  view3d_lamps_on(void) { return lamps_on(); }
+float view3d_hour(void)     { return hourNow; }
+float view3d_rain(void)     { return rain; }
 
 static void draw_lamps(void)
 {
@@ -844,6 +873,116 @@ void draw_plant(float x, float z)
     draw_box(v3(x + 0.14f, 1.10f, z - 0.08f), v3(0.24f, 0.42f, 0.24f), shade(leaf, 0.9f));
 }
 
+// ---- Equipment ----
+
+// Like part(), but for things that glow (screens and lights)
+static void part_lit(float lx, float y, float lz, float sx, float sy, float sz, Color c)
+{
+    float wx, wz, wsx = sx, wsz = sz;
+    switch (partFace) {
+        case FACE_SOUTH: wx =  lx; wz =  lz;                     break;
+        case FACE_NORTH: wx = -lx; wz = -lz;                     break;
+        case FACE_EAST:  wx =  lz; wz = -lx; wsx = sz; wsz = sx; break;
+        default:         wx = -lz; wz =  lx; wsx = sz; wsz = sx; break;
+    }
+    draw_lit_box(v3(partBase.x + wx, y, partBase.z + wz), v3(wsx, sy, wsz), c);
+}
+
+void draw_equipment_item(int e, Vector3 p, Facing f)
+{
+    partBase = p;
+    partFace = f;
+    Color kit = draw_equipment_colour(e);
+    switch (e) {
+        case EQUIP_MONITOR:          // a heart monitor on a wheeled stand
+            shadow(p.x, p.z, 0.4f, 0.4f);
+            part(0, 0.04f, 0, 0.40f, 0.05f, 0.40f, C_STEEL);
+            part(0, 0.60f, 0, 0.06f, 1.10f, 0.06f, C_STEEL);
+            part(0, 1.28f, 0, 0.46f, 0.34f, 0.10f, C_DARK);
+            part_lit(0, 1.28f, 0.055f, 0.38f, 0.26f, 0.01f, (Color){ 12, 30, 22, 255 });
+            part_lit(0, 1.28f, 0.062f, 0.30f, 0.02f, 0.01f, (Color){ 80, 255, 140, 255 });
+            part(0, 1.47f, 0, 0.46f, 0.04f, 0.10f, kit);
+            break;
+        case EQUIP_VENTILATOR:       // a white box on wheels, with a screen and a breathing hose
+            shadow(p.x, p.z, 0.55f, 0.5f);
+            part(0, 0.10f, 0, 0.50f, 0.08f, 0.44f, C_STEEL);
+            for (int i = 0; i < 4; i++) part((i % 2) ? 0.2f : -0.2f, 0.04f, (i < 2) ? 0.17f : -0.17f, 0.06f, 0.08f, 0.06f, C_DARK);
+            part(0, 0.58f, 0, 0.42f, 0.80f, 0.36f, C_CARD);
+            part(0, 0.99f, 0, 0.44f, 0.04f, 0.38f, kit);
+            part(0, 1.18f, 0.02f, 0.36f, 0.30f, 0.06f, C_DARK);
+            part_lit(0, 1.18f, 0.055f, 0.30f, 0.24f, 0.01f, (Color){ 60, 120, 210, 255 });
+            for (int i = 0; i < 5; i++) part(0.24f + 0.04f * i, 0.75f - 0.06f * i, 0.12f + 0.05f * i, 0.07f, 0.07f, 0.07f, (Color){ 170, 210, 240, 255 });
+            break;
+        case EQUIP_DEFIB:            // a red trolley with the defibrillator on top
+            shadow(p.x, p.z, 0.5f, 0.45f);
+            part(0, 0.43f, 0, 0.48f, 0.76f, 0.40f, (Color){ 210, 50, 50, 255 });
+            for (int i = 0; i < 3; i++) part(0, 0.22f + i * 0.2f, 0.205f, 0.40f, 0.02f, 0.01f, C_DARK);   // drawers
+            part(0, 0.88f, 0, 0.38f, 0.16f, 0.30f, (Color){ 250, 205, 45, 255 });
+            part(-0.10f, 0.98f, 0.04f, 0.10f, 0.05f, 0.14f, C_DARK);                               // paddles
+            part( 0.10f, 0.98f, 0.04f, 0.10f, 0.05f, 0.14f, C_DARK);
+            part_lit(0.12f, 0.92f, 0.155f, 0.06f, 0.04f, 0.01f, (Color){ 90, 230, 120, 255 });
+            break;
+        case EQUIP_DRIP:             // a drip stand with its pump and a bag of fluid
+            part(0, 0.03f, 0, 0.40f, 0.04f, 0.06f, C_STEEL);
+            part(0, 0.03f, 0, 0.06f, 0.04f, 0.40f, C_STEEL);
+            part(0, 0.98f, 0, 0.04f, 1.95f, 0.04f, C_STEEL);
+            part(0, 1.94f, 0, 0.30f, 0.03f, 0.03f, C_STEEL);
+            part(0.11f, 1.74f, 0, 0.15f, 0.25f, 0.05f, (Color){ 205, 230, 245, 255 });
+            part(0, 1.10f, 0.08f, 0.22f, 0.26f, 0.14f, kit);
+            part_lit(0, 1.14f, 0.152f, 0.14f, 0.08f, 0.01f, (Color){ 120, 230, 160, 255 });
+            break;
+        default:                     // a wheelchair
+            shadow(p.x, p.z, 0.65f, 0.75f);
+            part(0, 0.50f, 0.02f, 0.46f, 0.06f, 0.44f, kit);                       // seat
+            part(0, 0.80f, -0.22f, 0.46f, 0.52f, 0.05f, kit);                      // back
+            for (int s = -1; s <= 1; s += 2) {
+                part(s * 0.28f, 0.33f, -0.02f, 0.04f, 0.62f, 0.36f, C_DARK);       // big wheels (two
+                part(s * 0.28f, 0.33f, -0.02f, 0.04f, 0.36f, 0.62f, C_DARK);       //  crossed boxes)
+                part(s * 0.31f, 0.33f, -0.02f, 0.02f, 0.50f, 0.50f, C_STEEL);      // the hand rims
+                part(s * 0.18f, 0.06f, 0.30f, 0.05f, 0.12f, 0.08f, C_DARK);        // little front wheels
+                part(s * 0.22f, 0.70f, 0.04f, 0.04f, 0.04f, 0.40f, C_STEEL);       // armrests
+                part(s * 0.20f, 1.02f, -0.30f, 0.04f, 0.04f, 0.16f, C_DARK);       // handles
+            }
+            part(0, 0.12f, 0.38f, 0.40f, 0.03f, 0.14f, C_STEEL);                   // footrest
+            break;
+    }
+}
+
+// The equipment a patient in an A&E bed has with them, drawn round the bed
+// (as if the bed were at x = 0 on the back wall, like draw_bed).
+static void draw_bed_equipment(const Patient *p)
+{
+    unsigned held = p ? p->equipHeld : 0;
+    if (held & EQUIP_BIT(EQUIP_MONITOR)) draw_monitor(0.75f, BED_Z - 0.85f, p);
+    if (held & EQUIP_BIT(EQUIP_DRIP)) {
+        draw_drip(-0.75f, BED_Z - 0.60f, 0, true);
+        draw_box(v3(-0.75f, 1.10f, BED_Z - 0.52f), v3(0.22f, 0.26f, 0.14f), draw_equipment_colour(EQUIP_DRIP));   // the pump
+    }
+    if (held & EQUIP_BIT(EQUIP_VENTILATOR)) draw_equipment_item(EQUIP_VENTILATOR, v3(-0.82f, 0, BED_Z + 0.35f), FACE_EAST);
+    if (held & EQUIP_BIT(EQUIP_DEFIB))      draw_equipment_item(EQUIP_DEFIB, v3(0.82f, 0, BED_Z + 0.55f), FACE_WEST);
+}
+
+// The equipment bay in A&E, between the side door and the waiting room:
+// everything that's free is parked here, ready to go (up to three of each)
+static void draw_equipment_bay(const Sim *sim)
+{
+    float x0 = -7.85f, x1 = -3.85f, z0 = -0.45f, z1 = 0.88f;
+    // yellow lines round it, and its name on the floor
+    Color yel = shade((Color){ 240, 200, 40, 255 }, 1.0f);
+    quad(v3(x0, 0.012f, z0), v3(x1, 0.012f, z0), v3(x1, 0.012f, z0 + 0.06f), v3(x0, 0.012f, z0 + 0.06f), yel);
+    quad(v3(x0, 0.012f, z1 - 0.06f), v3(x1, 0.012f, z1 - 0.06f), v3(x1, 0.012f, z1), v3(x0, 0.012f, z1), yel);
+    quad(v3(x0, 0.012f, z0), v3(x0 + 0.06f, 0.012f, z0), v3(x0 + 0.06f, 0.012f, z1), v3(x0, 0.012f, z1), yel);
+    quad(v3(x1 - 0.06f, 0.012f, z0), v3(x1, 0.012f, z0), v3(x1, 0.012f, z1), v3(x1 - 0.06f, 0.012f, z1), yel);
+    sign_quad(signEquipment.texture, v3(x0 + 0.4f, 0.013f, z1 - 0.32f), v3(x1 - 0.4f, 0.013f, z1 - 0.32f),
+                                     v3(x1 - 0.4f, 0.013f, z1 - 0.08f), v3(x0 + 0.4f, 0.013f, z1 - 0.08f));
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        int free = sim->equipment[e].total - sim->equipment[e].inUse;
+        float cx = x0 + 0.4f + e * 0.8f;
+        Vector3 spots[3] = { v3(cx - 0.19f, 0, -0.2f), v3(cx + 0.19f, 0, -0.2f), v3(cx, 0, 0.28f) };
+        for (int k = 0; k < free && k < 3; k++) draw_equipment_item(e, spots[k], FACE_SOUTH);
+    }
+}
+
 static void draw_vending_machine(float x, float z)
 {
     shadow(x, z, 1.0f, 0.9f);
@@ -942,6 +1081,13 @@ static void update_bed_screens(const Sim *sim)
             int n = sim_nurse_at(sim, i), d = sim_doctor_at(sim, i);
             const char *who; Color whoCol = (Color){ 120, 200, 255, 255 };
             if (p->walkLeft > 0.0f)             { who = "On the way to the bed"; whoCol = (Color){ 170, 185, 210, 255 }; }
+            else if (p->doneInAE)               { who = "Waiting for a wheelchair"; whoCol = (Color){ 255, 190, 110, 255 }; }
+            else if (p->equipMissing) {
+                int e = 0;
+                while (e < EQUIP_TYPES - 1 && !(p->equipMissing & EQUIP_BIT(e))) e++;
+                who = TextFormat("Waiting: %s", sim_equipment_short(e));
+                whoCol = (Color){ 255, 120, 120, 255 };
+            }
             else if (d != -1)                     who = TextFormat("Dr %s", sim->doctors[d].name);
             else if (p->needsDoctor)            { who = "Waiting for a doctor"; whoCol = (Color){ 255, 120, 120, 255 }; }
             else if (n != -1 && p->assessLeft > 0) who = TextFormat("Assessing: %s", sim->nurses[n].name);
@@ -1009,8 +1155,13 @@ static void draw_floor(void)
         }
     }
 
-    // Outside, on the right: tarmac with two ambulance bays, the road the
-    // ambulances come and go on, and the helipad further back.
+}
+
+// Outside, on the right: tarmac with two ambulance bays, the road the
+// ambulances come and go on, and the helipad further back. (Drawn from every
+// floor's view, unlike A&E's floor.)
+static void draw_outside_ground(void)
+{
     Color tar = shade(C_ASPHALT, 1.0f);
     quad(v3(8.2f, -0.005f, -13.0f), v3(ROAD_X1, -0.005f, -13.0f), v3(ROAD_X1, -0.005f, 8.4f), v3(8.2f, -0.005f, 8.4f), tar);
     quad(v3(ROAD_X0, -0.005f, 8.4f), v3(ROAD_X1, -0.005f, 8.4f), v3(ROAD_X1, -0.005f, ROAD_END), v3(ROAD_X0, -0.005f, ROAD_END), tar);
@@ -1405,7 +1556,7 @@ static int path_from_junction(Place pl, Vector3 *pts)
 
 static bool same_point(Vector3 a, Vector3 b)
 {
-    return fabsf(a.x - b.x) < 0.01f && fabsf(a.z - b.z) < 0.01f;
+    return fabsf(a.x - b.x) < 0.01f && fabsf(a.y - b.y) < 0.01f && fabsf(a.z - b.z) < 0.01f;
 }
 
 // Walk from one place to another by way of the corridor: back along the way
@@ -1476,8 +1627,8 @@ static void start_walk(Tracked *t, float duration)
     float length = 0.0f;
     Vector3 from = t->pos;
     for (int i = 0; i < t->count; i++) {
-        float dx = t->points[i].x - from.x, dz = t->points[i].z - from.z;
-        length += sqrtf(dx * dx + dz * dz);
+        float dx = t->points[i].x - from.x, dy = t->points[i].y - from.y, dz = t->points[i].z - from.z;
+        length += sqrtf(dx * dx + dy * dy + dz * dz);       // (up or down in the lift counts too)
         from = t->points[i];
     }
     if (duration > 0.0f) t->walkSpeed = fminf(fmaxf(WALK_PACE, length / duration), WALK_HURRY);
@@ -1775,6 +1926,7 @@ static void track_patient(const Patient *p, Place pl, bool fresh, bool resync)
         return;
     }
     t->seen = true;
+    t->chair = (p->equipHeld & EQUIP_BIT(EQUIP_WHEELCHAIR)) != 0;
     bool moved = (t->place.kind != pl.kind) ||
                  (pl.kind == AT_BED && t->place.a != pl.a) ||
                  (pl.kind == AT_ROOM && (t->place.a != pl.a || t->place.b != pl.b)) ||
@@ -1849,9 +2001,10 @@ static void update_patients(const Sim *sim, float speed)
         float left = pace;
         while (left > 0 && t->next < t->count) {
             Vector3 g = t->points[t->next];
-            float dx = g.x - t->pos.x, dz = g.z - t->pos.z, d = sqrtf(dx * dx + dz * dz);
+            float dx = g.x - t->pos.x, dy = g.y - t->pos.y, dz = g.z - t->pos.z;
+            float d = sqrtf(dx * dx + dy * dy + dz * dz);
             if (d <= left) { t->pos = g; t->next++; left -= d; }
-            else           { t->pos.x += dx / d * left; t->pos.z += dz / d * left; left = 0; }
+            else           { t->pos.x += dx / d * left; t->pos.y += dy / d * left; t->pos.z += dz / d * left; left = 0; }
         }
         t->phase += pace * 5.0f;
         if (t->next >= t->count) {
@@ -1860,13 +2013,36 @@ static void update_patients(const Sim *sim, float speed)
         }
     }
 
+    // The lift: it goes wherever someone is riding in it, and its doors open
+    // on a floor when someone is about to get in or out there
+    bool riding = false;
+    for (int i = 0; i < MAX_TRACKED; i++) {
+        Tracked *t = &tracked[i];
+        if (!t->used || !t->walking || t->vehicle >= 0) continue;
+        if (fabsf(t->pos.x - LIFT_X) < 0.75f && t->pos.z > LIFT_DOOR_Z + 0.05f && !riding) {
+            liftCarY = t->pos.y;
+            riding = true;
+        }
+    }
+    for (int f = 0; f < FLOORS; f++) {
+        bool near = false;
+        for (int i = 0; i < MAX_TRACKED && !near; i++) {
+            Tracked *t = &tracked[i];
+            if (!t->used || !t->walking || t->vehicle >= 0 || fabsf(t->pos.y - f * FLOOR_H) > 0.3f) continue;
+            float dx = t->pos.x - LIFT_X, dz = t->pos.z - LIFT_DOOR_Z;
+            if (dx * dx + dz * dz < 1.3f * 1.3f) near = true;
+        }
+        bool open = near && fabsf(liftCarY - f * FLOOR_H) < 0.3f;
+        liftDoors[f] += ((open ? 1.0f : 0.0f) - liftDoors[f]) * (1.0f - expf(-6.0f * GetFrameTime()));
+    }
+
     // Open the doors when anyone is near them
     bool someoneNear = false;
     for (int i = 0; i < MAX_TRACKED; i++) {
         Tracked *t = &tracked[i];
         if (!t->used || !t->walking || t->vehicle >= 0) continue;
         float dx = t->pos.x - DOOR_X, dz = t->pos.z - 3.5f;
-        if (dx * dx + dz * dz < 2.2f * 2.2f) someoneNear = true;
+        if (dx * dx + dz * dz < 2.2f * 2.2f && t->pos.y < 0.1f) someoneNear = true;
     }
     float k = 1.0f - expf(-8.0f * GetFrameTime());
     doorOpen += ((someoneNear ? 1.0f : 0.0f) - doorOpen) * k;
@@ -1878,14 +2054,77 @@ static void update_patients(const Sim *sim, float speed)
     doorsWereNear = someoneNear;
 }
 
+// Which floor a height is on (0, 1 or 2).
+static int floor_of(float y)
+{
+    int f = (int)floorf(y / FLOOR_H + 0.5f);
+    return f < 0 ? 0 : (f >= FLOORS ? FLOORS - 1 : f);
+}
+
+// Inside the ground floor? (Its front is further back at A&E.)
+static bool inside_ground_floor(Vector3 p)
+{
+    return p.x > BUILDING_X0 && p.x < BUILDING_X1 && p.z > BUILDING_Z0 && p.z < BUILDING_Z1 &&
+           !(p.x > -8.1f && p.z > AE_FRONT_Z);
+}
+
+// Can someone at p be seen from the floor being looked at? They're on that
+// floor, or outside on the ground.
+static bool visible_from_view(Vector3 p)
+{
+    bool outsideGround = p.y < 0.1f && !inside_ground_floor(p);
+    if (viewFloor >= VIEW_OUTSIDE) return outsideGround;
+    return outsideGround || floor_of(p.y) == viewFloor;
+}
+
+// A patient in a wheelchair, and the porter pushing them. `f` is the way
+// they're going.
+static void draw_pushed(Vector3 p, Facing f, Color gown, float phase)
+{
+    draw_equipment_item(EQUIP_WHEELCHAIR, p, f);
+    // sitting in it: the same pieces as someone in a chair
+    partBase = p;
+    partFace = f;
+    part(0, 0.62f, 0.10f, 0.40f, 0.14f, 0.44f, C_TROUSERS);                  // thighs
+    part(0, 0.34f, 0.32f, 0.38f, 0.40f, 0.14f, C_TROUSERS);                  // shins
+    part(0, 0.95f, -0.08f, 0.46f, 0.55f, 0.28f, gown);                       // body
+    part(-0.28f, 0.80f, 0.02f, 0.12f, 0.16f, 0.36f, gown);                   // arms on the armrests
+    part( 0.28f, 0.80f, 0.02f, 0.12f, 0.16f, 0.36f, gown);
+    part(0, 1.39f, -0.08f, 0.32f, 0.32f, 0.32f, C_SKIN);                     // head
+    part(-0.07f, 1.42f, 0.085f, 0.05f, 0.05f, 0.01f, C_DARK);
+    part( 0.07f, 1.42f, 0.085f, 0.05f, 0.05f, 0.01f, C_DARK);
+    part(0, 1.57f, -0.10f, 0.34f, 0.08f, 0.34f, C_HAIR);
+    // the porter, behind the chair
+    Vector3 back = p;
+    switch (f) {
+        case FACE_SOUTH: back.z -= 0.85f; break;
+        case FACE_NORTH: back.z += 0.85f; break;
+        case FACE_EAST:  back.x -= 0.85f; break;
+        default:         back.x += 0.85f; break;
+    }
+    draw_person(back, f, (Outfit){ (Color){ 40, 70, 110, 255 }, C_TROUSERS, false, false, false, false }, true, phase);
+}
+
 static void draw_walkers(void)
 {
     for (int i = 0; i < MAX_TRACKED; i++) {
         Tracked *t = &tracked[i];
         if (!t->used || !t->walking || t->vehicle >= 0) continue;
+        if (!visible_from_view(t->pos)) continue;
         Vector3 target = t->points[t->next < t->count ? t->next : t->count - 1];
-        draw_person(t->pos, facing_for(t->pos, target), patient_outfit(t->gown), true, t->phase);
-        if (t->rescue) draw_box(v3(t->pos.x, 0.85f, t->pos.z), v3(0.52f, 0.5f, 0.34f), (Color){ 215, 220, 230, 255 });  // foil blanket
+        bool inLift = fabsf(target.x - t->pos.x) < 0.01f && fabsf(target.z - t->pos.z) < 0.01f && fabsf(target.y - t->pos.y) > 0.01f;
+        Facing face = inLift ? FACE_NORTH : facing_for(t->pos, target);   // riding the lift: stand still, face the doors
+        // Everything is drawn as if on the ground, then lifted to their floor
+        rlPushMatrix();
+        rlTranslatef(0, t->pos.y, 0);
+        Vector3 at = v3(t->pos.x, 0, t->pos.z);
+        if (t->chair) {
+            draw_pushed(at, face, t->gown, t->phase);
+        } else {
+            draw_person(at, face, patient_outfit(t->gown), !inLift, t->phase);
+            if (t->rescue) draw_box(v3(at.x, 0.85f, at.z), v3(0.52f, 0.5f, 0.34f), (Color){ 215, 220, 230, 255 });  // foil blanket
+        }
+        rlPopMatrix();
     }
 }
 
@@ -1946,6 +2185,7 @@ static void make_signs(void)
     signStation   = make_sign("NURSES' STATION", 512, 77,  40, C_BRAND, WHITE);
     signReception = make_sign("RECEPTION",       256, 128, 36, C_DARK, WHITE);
     signAmbulance = make_sign("AMBULANCES ONLY", 512, 122, 50, BLANK, C_HIVIS);
+    signEquipment = make_sign("EQUIPMENT BAY",   512, 80,  44, BLANK, C_HIVIS);
     tvScreen      = LoadRenderTexture(256, 144);
     SetTextureFilter(tvScreen.texture, TEXTURE_FILTER_BILINEAR);
     for (int i = 0; i < BED_COUNT; i++) {
@@ -1964,9 +2204,12 @@ void view3d_close(void)
     UnloadRenderTexture(signStation);
     UnloadRenderTexture(signReception);
     UnloadRenderTexture(signAmbulance);
+    UnloadRenderTexture(signEquipment);
     UnloadRenderTexture(tvScreen);
     for (int i = 0; i < BED_COUNT; i++) UnloadRenderTexture(bedScreen[i]);
     rooms3d_close();
+    floors3d_close();
+    outside3d_close();
     signsReady = false;
 }
 
@@ -1991,22 +2234,31 @@ static void glide_to(Vector3 target, float yaw, float pitch, float dist)
 
 // ---- The tour (T): the camera glides from shot to shot, turning slowly ----
 typedef struct {
-    int room;                  // a room to look at (1-7, see rooms3d.h), or 0 to use the numbers below
-    Vector3 target;
+    int floor;                 // which floor to look at (VIEW_OUTSIDE: the outside)
+    int room;                  // a ground floor room to look at (1-7, see rooms3d.h), or 0
+    int upstairs;              // a room upstairs to look at (a RoomType), or -1
+    Vector3 target;            // otherwise, the point to look at (on that floor)
     float yaw, pitch, dist;
     float turn;                // degrees a second it turns round while on this shot
 } Shot;
 
 static const Shot TOUR[] = {
-    { 0, {  3.0f, 0.4f,  0.9f },   0.0f, 42.0f, 21.0f,  3.0f },   // A&E from the front
-    { 0, { -1.0f, 0.4f, -3.2f },  15.0f, 28.0f, 10.0f,  4.0f },   // along the beds
-    { 0, {  2.5f, 0.4f,  4.0f }, -35.0f, 32.0f, 11.0f,  4.0f },   // the waiting room
-    { 0, { 13.5f, 0.4f,  3.0f }, -60.0f, 24.0f, 14.0f,  5.0f },   // the ambulance bays
-    { 1, { 0, 0, 0 },             20.0f, 45.0f,  0.0f,  4.0f },   // the ward
-    { 5, { 0, 0, 0 },            -20.0f, 45.0f,  0.0f,  4.0f },   // the operating theatre
-    { 2, { 0, 0, 0 },             10.0f, 48.0f,  0.0f,  4.0f },   // X-ray
-    { 0, {  3.0f, 0.4f,  0.9f },  60.0f, 12.0f, 30.0f,  2.0f },   // low, towards the sky
-    { 0, { -4.0f, 0.4f, -3.2f },   0.0f, 58.0f, 38.0f,  3.0f },   // the whole hospital
+    { 0, 0, -1, {  3.0f, 0.4f,  0.9f },   0.0f, 42.0f, 21.0f,  3.0f },   // A&E from the front
+    { 0, 0, -1, { -1.0f, 0.4f, -3.2f },  15.0f, 28.0f, 10.0f,  4.0f },   // along the beds
+    { 0, 0, -1, { -5.8f, 0.4f,  0.2f },  10.0f, 35.0f,  8.0f,  4.0f },   // the equipment bay
+    { 0, 0, -1, {  2.5f, 0.4f,  4.0f }, -35.0f, 32.0f, 11.0f,  4.0f },   // the waiting room
+    { 0, 0, -1, { 13.5f, 0.4f,  3.0f }, -60.0f, 24.0f, 14.0f,  5.0f },   // the ambulance bays
+    { 0, 1, -1, { 0, 0, 0 },             20.0f, 45.0f,  0.0f,  4.0f },   // the ward
+    { 0, 5, -1, { 0, 0, 0 },            -20.0f, 45.0f,  0.0f,  4.0f },   // the operating theatre
+    { 1, 0, ROOM_ICU,        { 0, 0, 0 },  10.0f, 46.0f,  0.0f,  3.0f },   // upstairs: intensive care
+    { 1, 0, ROOM_CT,         { 0, 0, 0 }, -15.0f, 48.0f,  0.0f,  4.0f },   // the CT scanner
+    { 1, 0, ROOM_CARDIO,     { 0, 0, 0 },  20.0f, 46.0f,  0.0f,  4.0f },   // the cath lab
+    { 2, 0, ROOM_MATERNITY,  { 0, 0, 0 },  10.0f, 46.0f,  0.0f,  3.0f },   // maternity
+    { 2, 0, ROOM_CHILDREN,   { 0, 0, 0 }, -10.0f, 46.0f,  0.0f,  3.0f },   // the children's ward
+    { 2, 0, ROOM_DIALYSIS,   { 0, 0, 0 },   0.0f, 48.0f,  0.0f,  4.0f },   // dialysis
+    { VIEW_OUTSIDE, 0, -1, { -3.0f, 3.0f,  4.0f },  25.0f, 22.0f, 40.0f,  3.0f },   // the whole building
+    { VIEW_OUTSIDE, 0, -1, { -4.0f, 1.0f, 12.0f }, -20.0f, 18.0f, 22.0f,  3.0f },   // the car park and the entrance
+    { VIEW_OUTSIDE, 0, -1, {  3.0f, 0.4f,  0.9f },  60.0f, 12.0f, 34.0f,  2.0f },   // low, towards the sky
 };
 #define TOUR_SHOTS ((int)(sizeof TOUR / sizeof TOUR[0]))
 #define SHOT_SECONDS 7.0f
@@ -2018,11 +2270,34 @@ static void start_shot(int i)
     const Shot *s = &TOUR[i];
     Vector3 target = s->target;
     float dist = s->dist;
-    if (s->room != 0) dist = rooms3d_focus(s->room, &target) * 0.85f;
+    if (s->room != 0)      dist = rooms3d_focus(s->room, &target) * 0.85f;
+    if (s->upstairs >= 0)  dist = floors3d_focus(s->upstairs, &target) * 0.85f;
+    viewFloor = s->floor;
     glide_to(target, s->yaw, s->pitch, dist);
     tourTurn = s->turn;
     tourTime = 0.0f;
 }
+
+// Look at another floor (or, with VIEW_OUTSIDE, the outside of the
+// building): the camera rises or falls to it, keeping its angle.
+static void set_view_floor(int f)
+{
+    if (f < 0) f = 0;
+    if (f > VIEW_OUTSIDE) f = VIEW_OUTSIDE;
+    int was = viewFloor;
+    viewFloor = f;
+    if (f == VIEW_OUTSIDE) {
+        glide_to(v3(-3.0f, 3.0f, 2.0f), 25.0f, 24.0f, 42.0f);       // the whole building
+    } else if (was == VIEW_OUTSIDE) {
+        glide_to(v3(-1.0f, f * FLOOR_H + 0.4f, -1.5f), 0.0f, 50.0f, 30.0f);   // the whole floor
+    } else {
+        glide_to(v3(camTarget.x, f * FLOOR_H + 0.4f, camTarget.z), camYaw, camPitch, camDist);
+    }
+}
+
+// The floor buttons in the 3D view's corner, like the buttons in a lift
+// (in HUD units; set while drawing, checked when the mouse is clicked)
+static Rectangle floorButton[FLOORS + 1];
 
 // Stop the tour and stop following anyone: the mouse or a key took over.
 static void manual_camera(void)
@@ -2033,6 +2308,11 @@ static void manual_camera(void)
 
 void view3d_update_camera(void)
 {
+    // Up and down the floors: PAGE UP / PAGE DOWN, or F to go round them all
+    if (IsKeyPressed(KEY_PAGE_UP))   { manual_camera(); set_view_floor(viewFloor + 1); }
+    if (IsKeyPressed(KEY_PAGE_DOWN)) { manual_camera(); set_view_floor(viewFloor - 1); }
+    if (IsKeyPressed(KEY_F))         { manual_camera(); set_view_floor((viewFloor + 1) % (VIEW_OUTSIDE + 1)); }
+
     // T: start or stop the tour
     if (IsKeyPressed(KEY_T)) {
         touring = !touring;
@@ -2041,12 +2321,14 @@ void view3d_update_camera(void)
     }
 
     // Number keys: 0 A&E, 1-7 the other rooms, 8 the whole hospital
-    if (IsKeyPressed(KEY_ZERO))  { manual_camera(); glide_to(v3(3.0f, 0.4f, 0.9f), 0.0f, 42.0f, 21.0f); }
-    if (IsKeyPressed(KEY_EIGHT)) { manual_camera(); glide_to(v3(-4.0f, 0.4f, -3.2f), 0.0f, 58.0f, 38.0f); }
-    if (IsKeyPressed(KEY_NINE))  { manual_camera(); glide_to(v3(10.8f, 0.4f, -3.2f), 0.0f, 52.0f, 24.0f); }   // helipad and bays
+    // (they're all on the ground floor, so they go back down there)
+    if (IsKeyPressed(KEY_ZERO))  { manual_camera(); viewFloor = 0; glide_to(v3(3.0f, 0.4f, 0.9f), 0.0f, 42.0f, 21.0f); }
+    if (IsKeyPressed(KEY_EIGHT)) { manual_camera(); viewFloor = 0; glide_to(v3(-4.0f, 0.4f, -3.2f), 0.0f, 58.0f, 38.0f); }
+    if (IsKeyPressed(KEY_NINE))  { manual_camera(); viewFloor = 0; glide_to(v3(10.8f, 0.4f, -3.2f), 0.0f, 52.0f, 24.0f); }   // helipad and bays
     for (int room = 1; room <= ROOM_COUNT; room++) {
         if (IsKeyPressed(KEY_ZERO + room)) {
             manual_camera();
+            viewFloor = 0;
             Vector3 centre;
             float dist = rooms3d_focus(room, &centre);
             glide_to(centre, 0.0f, 50.0f, dist);
@@ -2100,6 +2382,7 @@ void view3d_update_camera(void)
     if (touring) {
         tourTime += GetFrameTime();
         if (heliCut) {
+            viewFloor = VIEW_OUTSIDE;                // the whole building, closed up
             glide_to(v3(HELI_X - 1.0f, 0.4f, HELI_Z + 1.5f), -35.0f, 22.0f, 17.0f);
             tourTurn = 2.0f;
             tourTime = -4.0f;                        // stay a bit longer to watch it land
@@ -2115,13 +2398,15 @@ void view3d_update_camera(void)
     if (gliding) {
         float t = 1.0f - expf(-5.0f * GetFrameTime());
         camTarget.x += (goalTarget.x - camTarget.x) * t;
+        camTarget.y += (goalTarget.y - camTarget.y) * t;          // up or down to another floor
         camTarget.z += (goalTarget.z - camTarget.z) * t;
         camYaw   += (goalYaw - camYaw) * t;
         camPitch += (goalPitch - camPitch) * t;
         camDist  += (goalDist - camDist) * t;
         if (fabsf(goalDist - camDist) < 0.05f && fabsf(goalYaw - camYaw) < 0.1f &&
             fabsf(goalPitch - camPitch) < 0.1f && fabsf(goalTarget.x - camTarget.x) < 0.02f &&
-            fabsf(goalTarget.z - camTarget.z) < 0.02f && !touring && followId == 0) gliding = false;
+            fabsf(goalTarget.z - camTarget.z) < 0.02f && fabsf(goalTarget.y - camTarget.y) < 0.02f &&
+            !touring && followId == 0) gliding = false;
     }
 
     // Keep the camera above the floor and within reach of the building
@@ -2189,6 +2474,14 @@ static const char *status_text(const Sim *sim, int bed, const Patient *p)
 {
     int n = sim_nurse_at(sim, bed), d = sim_doctor_at(sim, bed);
     if (p->walkLeft > 0.0f)            return "On the way to the bed";
+    if (p->doneInAE)                   return "Treated: waiting for a wheelchair";
+    if (p->equipMissing) {
+        static char text[96];
+        char list[64];
+        sim_equipment_text(p->equipMissing, list, sizeof list);
+        snprintf(text, sizeof text, "Waiting for: %s", list);
+        return text;
+    }
     if (d != -1)                       return TextFormat("Treated by Dr %s", sim->doctors[d].name);
     if (p->needsDoctor)                return "Waiting for a doctor";
     if (n != -1 && p->assessLeft > 0)  return TextFormat("Being assessed by %s", sim->nurses[n].name);
@@ -2253,11 +2546,12 @@ static int patient_under(const Sim *sim, Camera3D cam, Vector2 at)
     for (int i = 0; i < MAX_TRACKED; i++) {
         const Tracked *t = &tracked[i];
         if (!t->used || t->vehicle >= 0 || t->vehicle == HELI_WAITING) continue;
-        BoundingBox box = { v3(t->pos.x - 0.45f, 0, t->pos.z - 0.45f), v3(t->pos.x + 0.45f, 1.9f, t->pos.z + 0.45f) };
+        if (!visible_from_view(t->pos)) continue;                 // on another floor
+        BoundingBox box = { v3(t->pos.x - 0.45f, t->pos.y, t->pos.z - 0.45f), v3(t->pos.x + 0.45f, t->pos.y + 1.9f, t->pos.z + 0.45f) };
         RayCollision hit = GetRayCollisionBox(ray, box);
         if (hit.hit && hit.distance < bestDist) { best = t->id; bestDist = hit.distance; }
     }
-    for (int i = 0; i < BED_COUNT; i++) {
+    for (int i = 0; i < BED_COUNT && viewFloor == 0; i++) {
         const Patient *p = sim->beds[i].occupant;
         if (p == NULL) continue;
         Vector3 c = bed_centre(i);
@@ -2310,7 +2604,7 @@ static void journey_card(const Sim *sim)
 {
     // Kept from frame to frame, so the card still says who they were once they've left
     static int  cardId = 0;
-    static char who[64], what[96], came[96], next[96];
+    static char who[64], what[96], came[96], next[96], kit[96];
     static int  severity = 3;
     char now[128];
 
@@ -2329,12 +2623,23 @@ static void journey_card(const Sim *sim)
         char route[64];
         sim_route_text(p, route, sizeof route);
         snprintf(next, sizeof next, "After A&E: %s", route);
+        char list[80];
+        if (p->equipMissing) {
+            sim_equipment_text(p->equipMissing, list, sizeof list);
+            snprintf(kit, sizeof kit, "Waiting for: %s", list);
+        } else if (p->equipHeld) {
+            sim_equipment_text(p->equipHeld, list, sizeof list);
+            snprintf(kit, sizeof kit, "With: %s", list);
+        } else {
+            sim_equipment_text(p->equipNeeds, list, sizeof list);
+            snprintf(kit, sizeof kit, "%s%s", p->equipNeeds ? "Needs: " : "No equipment needed", list);
+        }
     } else {
         if (cardId != followId) return;          // never found them: nothing to show
         snprintf(now, sizeof now, "Leaving the hospital");
     }
 
-    Rectangle r = { 20, hudH - 94 - 136, 360, 128 };
+    Rectangle r = { 20, hudH - 94 - 154, 380, 146 };
     DrawRectangleRounded(r, 0.12f, 8, night ? (Color){ 30, 38, 56, 235 } : (Color){ 255, 255, 255, 235 });
     DrawRectangleRoundedLines(r, 0.12f, 8, C_EDGE);
     DrawRectangle((int)r.x, (int)r.y + 10, 5, (int)r.height - 20, severity_color(severity));
@@ -2346,7 +2651,8 @@ static void journey_card(const Sim *sim)
     DrawText(what, x, y, 15, soft);                               y += 19;
     DrawText(came, x, y, 14, soft);                               y += 18;
     DrawText(TextFormat("Now: %s", now), x, y, 14, C_BRAND);      y += 18;
-    DrawText(next, x, y, 14, soft);
+    DrawText(next, x, y, 14, soft);                               y += 18;
+    DrawText(kit, x, y, 14, soft);
     DrawText("Click anywhere else to stop", (int)r.x + (int)r.width - 12 - MeasureText("Click anywhere else to stop", 11),
              (int)r.y + 10, 11, soft);
 }
@@ -2356,8 +2662,16 @@ static void hud(const Sim *sim, float speed, bool paused)
     Color text = night ? (Color){ 225, 232, 245, 255 } : C_INK;
     Color soft = night ? (Color){ 150, 165, 190, 255 } : C_MUTED;
 
+    // Soft panels behind the text, so it reads over anything
+    Color backing = night ? (Color){ 20, 26, 40, 170 } : (Color){ 255, 255, 255, 170 };
+    DrawRectangleRounded((Rectangle){ 10, 8, 520, touring ? 102 : 84 }, 0.15f, 8, backing);
+    DrawRectangleRounded((Rectangle){ 10, hudH - 78, 920, 70 }, 0.15f, 8, backing);
     DrawText("Hospital Resource Simulator", 20, 16, 24, night ? (Color){ 140, 180, 240, 255 } : C_BRAND);
-    const char *where = (camDist > 36.0f) ? "WHOLE HOSPITAL" : rooms3d_name_at(camTarget.x, camTarget.z);
+    const char *where;
+    if (viewFloor >= VIEW_OUTSIDE)  where = "OUTSIDE THE HOSPITAL";
+    else if (viewFloor > 0)         where = TextFormat("%s   %s", floors3d_floor_name(viewFloor), floors3d_name_at(viewFloor, camTarget.x, camTarget.z));
+    else if (camDist > 36.0f)       where = "GROUND FLOOR   WHOLE FLOOR";
+    else                            where = TextFormat("GROUND FLOOR   %s", rooms3d_name_at(camTarget.x, camTarget.z));
     DrawText(TextFormat("3D VIEW   %s", where), 20, 46, 16, soft);
     const char *sky = (rain > 0.6f) ? "Heavy rain" : (rain > 0.1f) ? "Raining" :
                       (sunset > 0.3f) ? (night ? "Sunrise" : "Sunset") : (darkness > 0.6f) ? "Clear night" : "Clear";
@@ -2383,11 +2697,42 @@ static void hud(const Sim *sim, float speed, bool paused)
     DrawText(TextFormat("Doctors busy %d / %d", busyD, DOCTORS_ON(sim->shift)), x, y, 16, soft);  y += 22;
     DrawText(TextFormat("Speed        %.1fx", speed), x, y, 16, soft);
 
+    // Equipment card: a row of blocks for each kind, filled for the ones in use
+    Rectangle kitCard = { hudW - 230, 180, 216, 128 };
+    DrawRectangleRounded(kitCard, 0.12f, 8, night ? (Color){ 30, 38, 56, 230 } : (Color){ 255, 255, 255, 230 });
+    x = (int)kitCard.x + 14; y = (int)kitCard.y + 10;
+    DrawText("EQUIPMENT IN USE", x, y, 13, soft);                                     y += 20;
+    for (int e = 0; e < EQUIP_TYPES; e++) {
+        const Equipment *q = &sim->equipment[e];
+        DrawRectangle(x, y + 3, 9, 9, draw_equipment_colour(e));
+        DrawText(sim_equipment_short(e), x + 14, y, 14, text);
+        for (int k = 0; k < q->total; k++) {
+            Rectangle b = { (float)(x + 98 + k * 15), (float)(y + 1), 12, 12 };
+            if (k < q->inUse) DrawRectangleRec(b, draw_equipment_colour(e));
+            else              DrawRectangleLinesEx(b, 1, soft);
+        }
+        y += 19;
+    }
+
+    // Floor buttons, like the ones in a lift: G, 1, 2, and the outside
+    Rectangle panel = { hudW - 230, 316, 216, 64 };
+    DrawRectangleRounded(panel, 0.2f, 8, night ? (Color){ 30, 38, 56, 230 } : (Color){ 255, 255, 255, 230 });
+    DrawText("FLOOR   (F, PAGE UP/DOWN)", (int)panel.x + 14, (int)panel.y + 8, 12, soft);
+    const char *names[FLOORS + 1] = { "G", "1", "2", "OUT" };
+    for (int f = 0; f <= VIEW_OUTSIDE; f++) {
+        Rectangle b = { panel.x + 12 + f * 50, panel.y + 26, (f == VIEW_OUTSIDE) ? 50 : 40, 30 };
+        floorButton[f] = b;
+        bool on = (viewFloor == f);
+        bool over = CheckCollisionPointRec((Vector2){ GetMousePosition().x / ui, GetMousePosition().y / ui }, b);
+        DrawRectangleRounded(b, 0.5f, 8, on ? C_BRAND : over ? (Color){ 200, 210, 225, 255 } : (Color){ 220, 226, 235, 255 });
+        DrawText(names[f], (int)(b.x + b.width / 2 - MeasureText(names[f], 16) / 2), (int)b.y + 7, 16, on ? WHITE : C_INK);
+    }
+
     if (paused) DrawText("PAUSED", (int)hudW / 2 - MeasureText("PAUSED", 30) / 2, 20, 30, C_EMERGENCY);
 
     DrawText("0 A&E   1 Ward   2 X-ray   3 MRI   4 Bloods   5 Theatre   6 Nursery   7 Admin   8 Whole hospital   9 Helipad",
              20, (int)hudH - 70, 14, soft);
-    DrawText("Drag to turn   Right-drag to move   Scroll to zoom   Click a patient to follow   T cinematic tour",
+    DrawText("Drag to turn   Right-drag to move   Scroll to zoom   Click a patient to follow   T cinematic tour   F floors",
              20, (int)hudH - 50, 14, soft);
     DrawText("V 2D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   O operate   M mute",
              20, (int)hudH - 30, 14, soft);
@@ -2414,6 +2759,8 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     update_weather(sim);             // the light and the rain for this time of day
     if (!signsReady) make_signs();
     rooms3d_prepare(sim);            // the other rooms' signs, before the scene too
+    floors3d_prepare();              // ...and the signs upstairs and outside
+    outside3d_prepare();
     update_tv(sim);                  // draws into the TV's picture, so before the scene
     update_bed_screens(sim);         // and the screens behind the beds
     update_patients(sim, paused ? 0.0f : speed);
@@ -2428,7 +2775,18 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     Camera3D cam = make_camera();
     if (clickPending) {
         clickPending = false;
-        int id = patient_under(sim, cam, clickAt);
+        // The floor buttons first (they're in HUD units)
+        Vector2 h = { clickAt.x / ui, clickAt.y / ui };
+        int button = -1;
+        for (int f = 0; f <= VIEW_OUTSIDE; f++) if (CheckCollisionPointRec(h, floorButton[f])) button = f;
+        int id = 0;
+        if (button >= 0) {
+            touring = false;
+            set_view_floor(button);
+            id = followId;                   // (keep following whoever it was)
+        } else {
+            id = patient_under(sim, cam, clickAt);
+        }
         followId = id;
         if (id != 0) {
             touring = false;
@@ -2445,7 +2803,9 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         } else {
             Vector3 p = follow_point(t);
             p.x = fminf(fmaxf(p.x, -17.0f), 15.0f);
-            goalTarget = v3(p.x, 0.4f, p.z);
+            goalTarget = v3(p.x, p.y + 0.4f, p.z);
+            // Inside the building: look at whichever floor they're on
+            if (p.y > 0.1f || inside_ground_floor(p)) viewFloor = floor_of(p.y);
             if (followIntro > 0) {
                 goalYaw = camYaw;
                 followIntro -= GetFrameTime();
@@ -2498,11 +2858,21 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         rlDisableBackfaceCulling();          // so every face shows from both sides
 
         draw_grounds();
+        draw_outside_ground();
+        outside3d_draw(viewFloor);           // the car park, and the floors below this one closed up
         draw_puddles();
         draw_lamps();
-        draw_room(sim);
-        rooms3d_draw(sim, cam.position, cam.target);
-        for (int i = 0; i < BED_COUNT; i++) {
+        bool ground = (viewFloor == 0);
+        if (ground) {
+            draw_room(sim);
+            rooms3d_draw(sim, cam.position, cam.target);
+            draw_equipment_bay(sim);
+        } else {
+            draw_entrance();                 // A&E's doors and sign, in the closed-up ground floor
+            if (viewFloor < VIEW_OUTSIDE) floors3d_draw(sim, viewFloor, cam.position, cam.target);
+        }
+        if (viewFloor < VIEW_OUTSIDE) floors3d_draw_lift(viewFloor, liftCarY, liftDoors[viewFloor]);
+        for (int i = 0; i < BED_COUNT && ground; i++) {
             const Patient *bp = sim->beds[i].occupant;
             // Draw the bed as if at x = 0 on the back wall, moved and turned into place
             Vector3 c = bed_centre(i);
@@ -2511,9 +2881,9 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
             rlRotatef(bed_turn(i), 0, 1, 0);
             rlTranslatef(0, 0, -BED_Z);
             draw_bed(0);
-            if (bp && !view3d_patient_walking(bp->id)) draw_lying_patient(0, bp);   // empty until they get there
-            draw_monitor(0.75f, BED_Z - 0.85f, bp);
-            draw_drip(-0.75f, BED_Z - 0.60f, 0, bp != NULL);
+            bool there = bp && !view3d_patient_walking(bp->id);
+            if (there) draw_lying_patient(0, bp);                       // empty until they get there
+            draw_bed_equipment(there ? bp : NULL);                      // whatever they have with them
             rlPopMatrix();
             if (i + 1 < WALL_BEDS) draw_curtain(bed_x(i) + BED_SPACING / 2);
         }
@@ -2521,30 +2891,32 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         // Waiting room: one chair per seat, filled most urgent first.
         // Someone still walking in leaves their chair empty until they get there.
         const Patient *p = sim->waiting;
-        for (int seat = 0; seat < CHAIR_ROWS * CHAIRS_PER_ROW; seat++) {
+        for (int seat = 0; seat < CHAIR_ROWS * CHAIRS_PER_ROW && ground; seat++) {
             draw_chair(chair_x(seat), chair_z(seat), (p && !view3d_patient_walking(p->id)) ? p : NULL);
             if (p) p = p->next;
         }
 
+        // The staff keep moving whichever floor is being looked at
         for (int k = 0; k < NURSES_ON(sim->shift); k++) {
             bool walking = is_walking(nursePos[k], nurseTarget[k]);
             Facing face = walking ? facing_for(nursePos[k], nurseTarget[k])
                                   : (nurseBed[k] == RESUS_BED ? FACE_EAST : nurseBed[k] != -1 ? FACE_NORTH : FACE_SOUTH);
             nursePos[k] = walk_towards(nursePos[k], nurseTarget[k]);
-            draw_person(nursePos[k], face, nurse_outfit(), walking, (float)GetTime() * 14.0f + k);
+            if (ground) draw_person(nursePos[k], face, nurse_outfit(), walking, (float)GetTime() * 14.0f + k);
         }
         for (int k = 0; k < DOCTORS_ON(sim->shift); k++) {
             bool walking = is_walking(doctorPos[k], doctorTarget[k]);
             Facing face = walking ? facing_for(doctorPos[k], doctorTarget[k])
                                   : (doctorBed[k] == RESUS_BED ? FACE_EAST : doctorBed[k] != -1 ? FACE_NORTH : FACE_SOUTH);
             doctorPos[k] = walk_towards(doctorPos[k], doctorTarget[k]);
-            draw_person(doctorPos[k], face, doctor_outfit(), walking, (float)GetTime() * 14.0f + k);
+            if (ground) draw_person(doctorPos[k], face, doctor_outfit(), walking, (float)GetTime() * 14.0f + k);
         }
         draw_walkers();
         draw_vehicles();
         draw_helipad_kit();
-        if (!lowRight) draw_door_glass();      // see-through, so last
-        rooms3d_draw_glass();
+        if (!lowRight || !ground) draw_door_glass();      // see-through, so last
+        if (ground) rooms3d_draw_glass();
+        else if (viewFloor < VIEW_OUTSIDE) floors3d_draw_glass(viewFloor);
         draw_rain(cam);
 
         // Light. By day, soft pools under the ceiling lights. As it gets dark
@@ -2552,14 +2924,14 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         // and the street lamps outside.
         BeginBlendMode(BLEND_ADDITIVE);
             unsigned char dayA = (unsigned char)(22 * (1.0f - darkness));
-            if (dayA > 1) {
+            if (dayA > 1 && ground) {
                 for (int gx = -6; gx <= 6; gx += 4) {
                     glow((float)gx, -2.6f, 2.4f, (Color){ 255, 255, 255, dayA });
                     glow((float)gx,  3.6f, 2.4f, (Color){ 255, 255, 255, dayA });
                 }
             }
             float lampK = night ? 1.0f : smooth(0.4f, 0.9f, darkness);    // lamps fade up at dusk
-            if (lampK > 0.01f) {
+            if (lampK > 0.01f && ground) {
                 for (int i = 0; i < BED_COUNT; i++) {
                     if (sim->beds[i].occupant) glow(bed_centre(i).x, bed_centre(i).z + 0.2f, 1.7f, (Color){ 255, 200, 120, (unsigned char)(70 * lampK) });
                 }
@@ -2568,7 +2940,9 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
                 glow(6.6f, 1.75f, 1.4f, (Color){ 255, 220, 160, (unsigned char)(45 * lampK) });           // reception
             }
             lamp_glows();
-            rooms3d_lights(sim);
+            outside3d_lights(viewFloor);
+            if (ground) rooms3d_lights(sim);
+            else if (viewFloor < VIEW_OUTSIDE) floors3d_lights(sim, viewFloor);
             vehicle_glows();
         EndBlendMode();
 
@@ -2588,7 +2962,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     int hoverBed = -1;
     Ray ray = GetScreenToWorldRay(GetMousePosition(), cam);
 
-    for (int i = 0; i < BED_COUNT; i++) {
+    for (int i = 0; i < BED_COUNT && ground; i++) {
         const Patient *bp = sim->beds[i].occupant;
         if (i == RESUS_BED) label("Resus", bed_point(i, 0, 1.30f, -1.10f), cam, 14, WHITE, C_EMERGENCY);
         else                label(TextFormat("Bed %d", i + 1), bed_point(i, 0, 1.30f, -1.10f), cam, 14, tagFg, tagBg);
@@ -2596,26 +2970,32 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
             float done = 1.0f - bp->treatmentLeft / bp->treatmentTotal;
             bool stalled = bp->needsDoctor && sim_doctor_at(sim, i) == -1;
             progress_bar(bed_point(i, 0, 1.15f, 0.2f), cam, done, stalled ? C_EMERGENCY : C_BRAND);
-            bool noNurse = !bp->needsDoctor && sim_nurse_at(sim, i) == -1;   // nobody has reached them yet
+            bool noNurse = !bp->needsDoctor && sim_nurse_at(sim, i) == -1 && !bp->doneInAE;   // nobody has reached them yet
             if (stalled) label("needs Dr", bed_point(i, 0, 1.55f, 0.2f), cam, 14, WHITE, C_EMERGENCY);
             if (noNurse) label("needs nurse", bed_point(i, 0, 1.55f, 0.2f), cam, 14, WHITE, (Color){ 230, 145, 35, 255 });
+            // waiting for equipment: what they're waiting for, in its colour
+            if (bp->equipMissing != 0 && !stalled && !noNurse) {
+                int e = 0;
+                while (e < EQUIP_TYPES - 1 && !(bp->equipMissing & EQUIP_BIT(e))) e++;
+                label(TextFormat("needs %s", sim_equipment_short(e)), bed_point(i, 0, 1.55f, 0.2f), cam, 14, WHITE, draw_equipment_colour(e));
+            }
         }
         Vector3 c = bed_centre(i);
         float hx = (i == RESUS_BED) ? 1.1f : 0.6f, hz = (i == RESUS_BED) ? 0.6f : 1.1f;   // half the bed's size
         BoundingBox box = { v3(c.x - hx, 0, c.z - hz), v3(c.x + hx, 1.0f, c.z + hz) };
         if (GetRayCollisionBox(ray, box).hit) hoverBed = i;
     }
-    for (int k = 0; k < NURSES_ON(sim->shift); k++) {
+    for (int k = 0; k < NURSES_ON(sim->shift) && ground; k++) {
         float h = 1.8f + (k % 2) * 0.3f;   // every second tag a little higher, so neighbours don't overlap
         label(sim->nurses[k].name, v3(nursePos[k].x, h, nursePos[k].z), cam, 12, WHITE, C_BRAND);
     }
-    for (int k = 0; k < DOCTORS_ON(sim->shift); k++) {
+    for (int k = 0; k < DOCTORS_ON(sim->shift) && ground; k++) {
         float h = 2.1f + (k % 2) * 0.3f;   // doctors' tags sit above the nurses'
         label(TextFormat("Dr %s", sim->doctors[k].name), v3(doctorPos[k].x, h, doctorPos[k].z),
               cam, 12, WHITE, C_INK);
     }
     int seats = CHAIR_ROWS * CHAIRS_PER_ROW;
-    if (sim->waitingCount > seats) {
+    if (sim->waitingCount > seats && ground) {
         label(TextFormat("+%d more waiting", sim->waitingCount - seats), v3(0, 0.1f, 6.4f),
               cam, 16, WHITE, C_EMERGENCY);
     }

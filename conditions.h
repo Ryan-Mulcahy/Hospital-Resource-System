@@ -7,7 +7,7 @@
 #define MAX_CONDITIONS     64
 #define CONDITION_NAME_LEN 48
 #define ICD10_LEN          12
-#define PATHWAY_LEN        24
+#define PATHWAY_LEN        40
 
 typedef struct {
     int severity;                     // 1 = emergency, 2 = urgent, 3 = routine
@@ -15,10 +15,13 @@ typedef struct {
     char icd10[ICD10_LEN];            // e.g. "R07.9"
     char pathway[PATHWAY_LEN];        // where they go after A&E, e.g. "xray" or
                                       // "theatre+ward"; "home" or empty: straight home
+    char equipment[PATHWAY_LEN];      // equipment they need, e.g. "monitor+drip";
+                                      // empty: none
 } Condition;
 
 // Read conditions from a CSV file with the columns severity,condition,icd10
-// and, optionally, pathway (rooms after A&E, joined with '+').
+// and, optionally, pathway (rooms after A&E, joined with '+') and equipment
+// (what they need, joined with '+': monitor, ventilator, defib, drip, wheelchair).
 // The header row and any line that doesn't parse are skipped.
 // Returns how many conditions were loaded (0 if the file couldn't be opened).
 int conditions_load(const char *filename);

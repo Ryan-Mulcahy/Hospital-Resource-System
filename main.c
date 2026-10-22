@@ -9,8 +9,12 @@
 //   draw.c/.h     everything drawn on screen during a shift
 //   report.c/.h   the end-of-shift report screen
 //   view3d.c/.h   the 3D view of A&E (V switches between 2D and 3D)
-//   rooms3d.c/.h  the rest of the hospital in 3D: ward, X-ray, MRI, bloods
+//   rooms3d.c/.h  the rest of the ground floor in 3D: ward, X-ray, MRI, bloods
 //                 and weight, operating theatre, nursery and admin office
+//   floors3d.c/.h the first and second floors in 3D (CT, ultrasound,
+//                 cardiology, ICU, pharmacy, lab, staff room; maternity,
+//                 children's ward, physio, dialysis, chapel, cafe) and the lifts
+//   outside3d.c/.h the outside of the building, the car park and the grounds
 //   sound.c/.h    sound effects, made in code (no sound files needed)
 //   opgame.c/.h   the operation mini-game (O)
 //   main.c        window, main loop and keyboard input
@@ -22,11 +26,13 @@
 // Controls: SPACE pause | UP/DOWN speed | E spawn emergency | R restart the day
 //           H helicopter rescue | O operate (the mini-game) | M sound on/off
 //           F11 full screen on/off
-//           N continue to the next shift, L view patients treated (report screen)
+//           N continue to the next shift, L view patients treated,
+//           E equipment and rooms (report screen)
 //           wheel or UP/DOWN scroll, B go back (patients-treated page)
 //           3D view: drag to turn, right-drag to move, scroll to zoom,
 //           0 A&E, 1-7 rooms, 8 whole hospital, 9 helipad and ambulance bay,
-//           T cinematic tour, click a patient to follow them
+//           T cinematic tour, click a patient to follow them,
+//           F or PAGE UP/DOWN (or the floor buttons) to change floor or see the outside
 //           Operation game: click and hold the item, drag it to the tray
 //           without touching the edge. Q give up, R try again (practice)
  
@@ -78,6 +84,7 @@ int main(void)
     bool view3d = false;     // V switches between the 2D and 3D views
     float speed = 1.0f;
     bool viewingLog = false;   // on the report screen: showing the patients-treated page
+    bool viewingKit = false;   // on the report screen: showing the equipment and rooms page
     int logScroll = 0;         // first row shown on that page
  
     while (!WindowShouldClose()) {
@@ -116,11 +123,18 @@ int main(void)
             if (IsKeyPressed(KEY_B) || IsKeyPressed(KEY_BACKSPACE) || report_log_back_clicked()) {
                 viewingLog = false;
             }
+        } else if (sim.shiftOver && viewingKit) {
+            // Equipment and rooms page: go back to the report
+            if (IsKeyPressed(KEY_B) || IsKeyPressed(KEY_BACKSPACE) || report_equipment_back_clicked()) {
+                viewingKit = false;
+            }
         } else if (sim.shiftOver) {
-            // Report screen: view the log, or start the next shift
+            // Report screen: view the log or the equipment page, or start the next shift
             if (IsKeyPressed(KEY_L) || report_view_log_clicked()) {
                 viewingLog = true;
                 logScroll = 0;
+            } else if (IsKeyPressed(KEY_E) || report_view_equipment_clicked()) {
+                viewingKit = true;
             } else if (IsKeyPressed(KEY_N) || report_new_shift_clicked()) {
                 if (sim.shift == SHIFT_DAY) {
                     sim_start_night(&sim);       // same patients, night staff
@@ -174,6 +188,7 @@ int main(void)
             BeginMode2D(fit);                            // 2D screens, scaled to fit
             if (showRoster)                  draw_roster_screen(sim.day, sim.shift);
             else if (sim.shiftOver && viewingLog) draw_patient_log(&sim, logScroll);
+            else if (sim.shiftOver && viewingKit) draw_equipment_report(&sim);
             else if (sim.shiftOver)          draw_shift_report(&sim);
             else {
                 draw_frame(&sim, speed, paused);
