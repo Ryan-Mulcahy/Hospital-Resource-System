@@ -16,10 +16,16 @@
 //                 children's ward, physio, dialysis, waiting area, cafe) and the lifts
 //   outside3d.c/.h the outside of the building, the car park and the grounds
 //   sound.c/.h    sound effects, made in code (no sound files needed)
-//   minigames.c/.h the mini-game menu (G), and the three games:
+//   minigames.c/.h the mini-game menu (G), and the eight games:
 //   opgame.c/.h   the operation (O)
 //   defibgame.c/.h "Shock!", the defibrillator
 //   veingame.c/.h "Find the vein", taking blood
+//   scangame.c/.h "Hold still", X-ray and CT
+//   triagegame.c/.h "Triage call", sorting new arrivals
+//   pharmgame.c/.h "Pharmacy rush", making up a prescription
+//   drivegame.c/.h "Blue lights", driving the ambulance in
+//   heligame.c/.h "Touchdown", landing the rescue helicopter
+//   gameui.c/.h   drawing the games share (the top bar, the result box)
 //   main.c        window, main loop and keyboard input
 //
 // A run covers one day: the day shift (07:00 to 19:00), then the night shift
@@ -38,12 +44,16 @@
 //           0 A&E, 1-7 rooms, 8 whole hospital, 9 helipad and ambulance bay,
 //           T cinematic tour, click a patient to follow them,
 //           F or PAGE UP/DOWN (or the floor buttons) to change floor or see the outside
-//           Mini games menu: 1-3 or click to play, G or BACKSPACE back.
+//           Mini games menu: 1-8 or click to play, G or BACKSPACE back.
 //           Operation: click and hold the item, drag it to the tray
 //           without touching the edge. Shock!: C charge, SPACE shock as a
 //           spike passes the zone. Find the vein: hold the right button to
 //           feel, left-click to go in, hold left to push, let go at the
-//           flashback. In every game: Q give up, R try again (practice)
+//           flashback. Hold still: frame on the ring, click when still.
+//           Triage call: drag each arrival to a box, ENTER to send them.
+//           Pharmacy rush: click the tubs. Blue lights: LEFT/RIGHT steer,
+//           DOWN brake. Touchdown: LEFT/RIGHT, hold UP to hover, DOWN to
+//           drop. In every game: Q give up, R try again (practice)
  
 #include <math.h>
 #include "raylib.h"
@@ -191,9 +201,10 @@ int main(void)
             sound_update(&sim, paused);  // siren and monitor alarm
         }
 
-        // The helicopter and rain sounds belong to the 3D view
+        // The helicopter and rain sounds belong to the 3D view (and the
+        // helicopter's to the landing game)
         if (!in3d) {
-            sound_loop(SND_ROTOR, false, 0.0f);
+            sound_loop(SND_ROTOR, minigames_rotor(), 0.5f);
             sound_loop(SND_RAIN, false, 0.0f);
         }
  

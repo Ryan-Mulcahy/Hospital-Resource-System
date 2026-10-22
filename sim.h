@@ -167,6 +167,20 @@ typedef struct {
     int shocksFailed;
     int veinsPlayed;         // the find-the-vein game, on real patients
     int veinsFailed;
+    int scansPlayed;         // the hold-still game in X-ray and CT, on real patients
+    int scansFailed;         // ...blurry shots that needed a retake
+    int pharmacyPlayed;      // the pharmacy rush game, on real patients
+    int pharmacyFailed;      // ...wrong pill or out of time
+    int pharmacySentBack;    // ...of those, wrong pills: sent back to the pharmacy's queue
+    int triageGames;         // the triage call game (three arrivals each time)
+    int triageGamesLost;     // ...games with any call wrong
+    int triageRight;         // arrivals given the right priority
+    int triageTooLow;        // ...given a lower priority than they needed (seen too late)
+    int triageTooHigh;       // ...given a higher one (took a bed sooner than they needed)
+    int drivesPlayed;        // the blue lights game (an ambulance brings an emergency in)
+    int drivesSlow;          // ...arrived too slowly
+    int landingsPlayed;      // the helicopter landing game, on real rescues
+    int landingsFailed;      // ...hard landings, or out of time
 
     // Equipment
     float equipBusyTime[EQUIP_TYPES];    // item-seconds in use (for the % busy)
@@ -251,6 +265,44 @@ void sim_shock_result(Sim *sim, int id, bool won);
 // id. Won: a clean first go, so the rest of their time there is halved.
 // Lost: the vein blew, so it takes longer (half as long again as usual).
 void sim_vein_result(Sim *sim, int id, bool won);
+
+// The result of the hold-still game for the patient in X-ray or CT (`room`)
+// with this id. Won: a sharp image first time, so the rest of their time
+// there is halved. Lost: blurry, so a retake: half as long again as usual.
+void sim_scan_result(Sim *sim, int room, int id, bool won);
+
+// How the pharmacy rush game went.
+typedef enum {
+    PHARMACY_FAST,           // the right pills, quickly: their visit is halved
+    PHARMACY_SLOW,           // the right pills, but slowly: no change
+    PHARMACY_WRONG,          // a wrong pill: they go back to the pharmacy's queue
+    PHARMACY_TIMEOUT         // ran out of time: half as long again as usual
+} PharmacyResult;
+
+// The result of the pharmacy game for the patient in the pharmacy with this id.
+void sim_pharmacy_result(Sim *sim, int id, PharmacyResult result);
+
+// The triage call game. sim_triage_new makes a new arrival (a random
+// severity and condition) who isn't in the department yet, for the game to
+// show. sim_triage_admit then puts them in the waiting room with the
+// priority they were given (1, 2 or 3), which decides where they go in the
+// queue; 0 means nobody decided, so they keep their real priority and it
+// isn't counted. Every patient from sim_triage_new must be admitted, once.
+Patient *sim_triage_new(Sim *sim);
+void sim_triage_admit(Sim *sim, Patient *p, int given);
+
+// The triage game is over: count it (lost if any call was wrong).
+void sim_triage_game(Sim *sim, bool allRight);
+
+// The blue lights game: an ambulance brings an emergency in. `fast`: they
+// got there quickly, so the crew had a head start (40% off their treatment);
+// otherwise their treatment takes 20% longer. Returns the new patient's id.
+int sim_ambulance_arrival(Sim *sim, bool fast);
+
+// The helicopter landing game, for the rescue with this id that's still in
+// the air. Won: a smooth landing and a quick handover, so their treatment in
+// A&E takes 40% less. Lost: a rough landing, so it takes 25% longer.
+void sim_landing_result(Sim *sim, int id, bool won);
 
 // Patients in a room or waiting for one, across every room.
 int sim_patients_in_rooms(const Sim *sim);

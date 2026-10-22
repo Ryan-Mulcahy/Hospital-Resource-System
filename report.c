@@ -21,17 +21,17 @@
 // Report buttons: "Patients treated", "Equipment & rooms", and continue.
 static Rectangle view_log_button(void)
 {
-    return (Rectangle){ SCREEN_W / 2 - 345, 484, 220, 50 };
+    return (Rectangle){ SCREEN_W / 2 - 345, 500, 220, 50 };
 }
 
 static Rectangle equipment_button(void)
 {
-    return (Rectangle){ SCREEN_W / 2 - 110, 484, 220, 50 };
+    return (Rectangle){ SCREEN_W / 2 - 110, 500, 220, 50 };
 }
  
 static Rectangle continue_button(void)
 {
-    return (Rectangle){ SCREEN_W / 2 + 125, 484, 220, 50 };
+    return (Rectangle){ SCREEN_W / 2 + 125, 500, 220, 50 };
 }
  
 static bool clicked(Rectangle r)
@@ -127,11 +127,18 @@ void draw_shift_report(const Sim *sim)
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
     row("Longest wait", TextFormat("%.0f min", sim_minutes(s->longestWait)),
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
-    // The operation game (O): operations you did on real patients, and how many went wrong
-    int played = s->surgeriesPlayed + s->shocksPlayed + s->veinsPlayed;
-    int lost = s->complications + s->shocksFailed + s->veinsFailed;
+    // The mini games (G): games played for real patients, and how many were won
+    int played = s->surgeriesPlayed + s->shocksPlayed + s->veinsPlayed + s->scansPlayed + s->triageGames +
+                 s->pharmacyPlayed + s->drivesPlayed + s->landingsPlayed;
+    int lost = s->complications + s->shocksFailed + s->veinsFailed + s->scansFailed + s->triageGamesLost +
+               s->pharmacyFailed + s->drivesSlow + s->landingsFailed;
     row("Mini games won / played", TextFormat("%d / %d", played - lost, played),
-        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 32;
+        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
+    // The triage game: calls right, and the wrong ones (too low: seen too late)
+    int calls = s->triageRight + s->triageTooLow + s->triageTooHigh;
+    row("Triage calls right", calls == 0 ? "none made" :
+        TextFormat("%d / %d (%d low, %d high)", s->triageRight, calls, s->triageTooLow, s->triageTooHigh),
+        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 28;
  
     float bedUse = 100.0f * s->bedBusyTime    / (BED_COUNT    * SHIFT_LENGTH);
     float docUse = 100.0f * s->nurseBusyTime / (NURSES_ON(sim->shift) * SHIFT_LENGTH);
@@ -144,7 +151,7 @@ void draw_shift_report(const Sim *sim)
     row(TextFormat("Doctors busy (%d)", DOCTORS_ON(sim->shift)), TextFormat("%.0f%%", drUse),
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
     row("On-call doctor called", s->onCallCalls ? TextFormat("%dx, %.0f min", s->onCallCalls, sim_minutes(s->onCallTime)) : "no",
-        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 32;
+        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 28;
     
         // After the night shift: totals for the whole day
     if (night) {
@@ -169,9 +176,9 @@ void draw_shift_report(const Sim *sim)
     const char *vHint = "or press L";
     const char *eHint = "or press E";
     const char *bHint = "or press N";
-    DrawText(vHint, (int)(v.x + v.width / 2 - MeasureText(vHint, 14) / 2), 540, 14, C_MUTED);
-    DrawText(eHint, (int)(e.x + e.width / 2 - MeasureText(eHint, 14) / 2), 540, 14, C_MUTED);
-    DrawText(bHint, (int)(b.x + b.width / 2 - MeasureText(bHint, 14) / 2), 540, 14, C_MUTED);
+    DrawText(vHint, (int)(v.x + v.width / 2 - MeasureText(vHint, 14) / 2), 556, 14, C_MUTED);
+    DrawText(eHint, (int)(e.x + e.width / 2 - MeasureText(eHint, 14) / 2), 556, 14, C_MUTED);
+    DrawText(bHint, (int)(b.x + b.width / 2 - MeasureText(bHint, 14) / 2), 556, 14, C_MUTED);
 }
 
 // ---------------------------------------------------------------- equipment and rooms page

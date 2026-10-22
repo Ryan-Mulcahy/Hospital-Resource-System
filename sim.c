@@ -485,6 +485,111 @@ void sim_vein_result(Sim *sim, int id, bool won)
     }
 }
 
+void sim_scan_result(Sim *sim, int room, int id, bool won)
+{
+    SimRoom *r = &sim->rooms[room];
+    for (int s = 0; s < r->capacity; s++) {
+        Patient *p = r->in[s];
+        if (p == NULL || p->id != id) continue;
+        sim->stats.scansPlayed++;
+        if (won) {
+            p->roomLeft *= 0.5f;
+        } else {
+            p->roomLeft += 0.5f * r->duration;           // the retake
+            sim->stats.scansFailed++;
+        }
+        return;
+    }
+}
+
+void sim_pharmacy_result(Sim *sim, int id, PharmacyResult result)
+{
+    SimRoom *room = &sim->rooms[ROOM_PHARMACY];
+    for (int s = 0; s < room->capacity; s++) {
+        Patient *p = room->in[s];
+        if (p == NULL || p->id != id) continue;
+        sim->stats.pharmacyPlayed++;
+        if (result == PHARMACY_FAST) {
+            p->roomLeft *= 0.5f;
+        } else if (result == PHARMACY_TIMEOUT) {
+            p->roomLeft += 0.5f * room->duration;
+            sim->stats.pharmacyFailed++;
+        } else if (result == PHARMACY_WRONG) {
+            // Back to the queue: their place is given up (and set up for the
+            // next one), and they wait with everyone else for another go
+            sim->stats.pharmacyFailed++;
+            sim->stats.pharmacySentBack++;
+            room->in[s] = NULL;
+            room->ready[s] = ROOM_TURNOVER;
+            p->roomLeft = 0.0f;
+            p->walkLeft = 0.0f;                          // already there: straight into the queue
+            queue_insert(&room->queue, p);
+            room->queueCount++;
+        }
+        return;
+    }
+}
+
+Patient *sim_triage_new(Sim *sim)
+{
+    return new_patient(sim, random_severity());
+}
+
+void sim_triage_admit(Sim *sim, Patient *p, int given)
+{
+    if (p == NULL) return;
+    if (given >= 1 && given <= 3) {
+        if (given == p->severity)     sim->stats.triageRight++;
+        else if (given > p->severity) sim->stats.triageTooLow++;    // e.g. an emergency called routine
+        else                          sim->stats.triageTooHigh++;
+        p->severity = given;          // their place in the queue follows the call that was made
+    }
+    p->arrivalTime = sim->clock;
+    queue_insert(&sim->waiting, p);
+    sim->waitingCount++;
+    sim->stats.arrived++;
+}
+
+void sim_triage_game(Sim *sim, bool allRight)
+{
+    sim->stats.triageGames++;
+    if (!allRight) sim->stats.triageGamesLost++;
+}
+
+int sim_ambulance_arrival(Sim *sim, bool fast)
+{
+    Patient *p = new_patient(sim, 1);
+    if (p == NULL) return 0;
+    if (fast) {
+        p->treatmentLeft *= 0.6f;                        // started on the way in
+    } else {
+        p->treatmentTotal *= 1.2f;                       // longer to stabilise
+        p->treatmentLeft = p->treatmentTotal;
+    }
+    queue_insert(&sim->waiting, p);
+    sim->waitingCount++;
+    sim->stats.arrived++;
+    sim->stats.drivesPlayed++;
+    if (!fast) sim->stats.drivesSlow++;
+    return p->id;
+}
+
+void sim_landing_result(Sim *sim, int id, bool won)
+{
+    for (Patient *p = sim->inbound; p != NULL; p = p->next) {
+        if (p->id != id) continue;
+        sim->stats.landingsPlayed++;
+        if (won) {
+            p->treatmentLeft *= 0.6f;
+        } else {
+            p->treatmentTotal *= 1.25f;                  // (not started yet: the whole treatment is longer)
+            p->treatmentLeft = p->treatmentTotal;
+            sim->stats.landingsFailed++;
+        }
+        return;
+    }
+}
+
 void sim_init(Sim *sim, int day)
 {
     *sim = (Sim){ 0 };
