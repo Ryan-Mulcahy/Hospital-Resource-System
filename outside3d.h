@@ -19,6 +19,14 @@ void outside3d_prepare(void);
 // Call inside BeginMode3D().
 void outside3d_draw(int viewFloor);
 
+// The main entrance's frame, sign and sliding doors (they open as visitors
+// come to them). Drawn by outside3d_draw when the ground floor is closed up;
+// view3d.c calls it for the ground floor's own view.
+void outside3d_draw_main_doors(void);
+
+// The main entrance's glass. Call after everything else, like other glass.
+void outside3d_draw_main_door_glass(void);
+
 // Lamps in the car park and over the entrance. Call inside BeginBlendMode(BLEND_ADDITIVE).
 void outside3d_lights(int viewFloor);
 

@@ -57,6 +57,8 @@ static void draw_waiting_room(const Sim *sim)
     const int x0 = 40, y0 = 110, step = 34, perRow = 16, rows = 2, maxShown = perRow * rows;
 
     DrawText("WAITING ROOM", x0, 60, 20, t.ink);
+    int flying = sim_inbound_count(sim);
+    if (flying > 0) DrawText(TextFormat("+%d coming by helicopter", flying), x0 + 175, 64, 14, C_EMERGENCY);
     Rectangle room = { x0 - 15, y0 - 25, perRow * step + 15, rows * step + 15 };
     DrawRectangleRounded(room, 0.15f, 8, t.card);
     DrawRectangleRoundedLines(room, 0.15f, 8, t.edge);
@@ -188,7 +190,7 @@ static void draw_beds(const Sim *sim)
 
 static void draw_nurses(const Sim *sim)
 {
-    const int x0 = 40, y0 = 480, w = 80, h = 40, gap = 16;
+    const int x0 = 40, y0 = 480, w = 78, h = 40, gap = 8;
 
     DrawText("STAFF", x0, y0 - 28, 20, t.ink);
 
@@ -207,18 +209,21 @@ static void draw_nurses(const Sim *sim)
                  x + 8, y0 + 22, 12, busy ? WHITE : t.light);
     }
 
-    // Doctors go in the same row, after the nurses, in a darker colour
-    for (int d = 0; d < DOCTORS_ON(sim->shift); d++) {
+    // Doctors go in the same row, after the nurses, in a darker colour (and
+    // the on-call doctor, when they've been called in, with a red edge)
+    for (int d = 0; d < sim_doctors_on(sim); d++) {
         int x = x0 + (NURSES_ON(sim->shift) + d) * (w + gap);
         int bed = sim->doctors[d].busyWithBed;
         bool busy = (bed != -1);
 
         Rectangle card = { x, y0, w, h };
+        bool onCall = (d >= DOCTORS_ON(sim->shift));
         DrawRectangleRounded(card, 0.4f, 8, busy ? t.doctorBusy : t.card);
-        DrawRectangleRoundedLines(card, 0.4f, 8, t.edge);
+        DrawRectangleRoundedLines(card, 0.4f, 8, onCall ? C_EMERGENCY : t.edge);
         DrawText(TextFormat("Dr %s", sim->doctors[d].name), x + 8, y0 + 6, 14, busy ? WHITE : t.ink);
-        DrawText(busy ? (bed == RESUS_BED ? "Resus" : TextFormat("Bed %d", bed + 1)) : "free",
-                 x + 8, y0 + 22, 12, busy ? WHITE : t.light);
+        const char *where = busy ? (bed == RESUS_BED ? "Resus" : TextFormat("Bed %d", bed + 1)) : "free";
+        if (onCall && !busy) where = "on call";
+        DrawText(where, x + 8, y0 + 22, 12, busy ? WHITE : (onCall ? C_EMERGENCY : t.light));
     }
 }
 
@@ -235,7 +240,7 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     }
 
     int busyDoctors = 0;
-    for (int d = 0; d < DOCTOR_COUNT; d++) {
+    for (int d = 0; d < DOCTOR_SLOTS; d++) {
         if (sim->doctors[d].busyWithBed != -1) busyDoctors++;
     }
 
@@ -259,7 +264,8 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     DrawText(TextFormat("Avg wait:   %.1f s", avgWait),               x, y + 5 * line + 8, 16, t.ink);
     DrawText(TextFormat("Nurses:    %d / %d", busyNurses, NURSES_ON(sim->shift)), x, y + 6 * line + 8, 16, t.ink);
 
-    DrawText(TextFormat("Doctors:    %d / %d", busyDoctors, DOCTORS_ON(sim->shift)), x, y + 7 * line + 8, 16, t.ink);
+    DrawText(TextFormat("Doctors:    %d / %d%s", busyDoctors, sim_doctors_on(sim), sim->onCall ? "  (on call in)" : ""),
+             x, y + 7 * line + 8, 16, sim->onCall ? t.alert : t.ink);
     DrawText(TextFormat("In rooms:   %d", sim_patients_in_rooms(sim)), x, y + 8 * line + 8, 16, t.ink);
     DrawText(TextFormat("Speed:      %.1fx", speed),                  x, y + 9 * line + 8, 16, t.ink);
 
@@ -319,6 +325,9 @@ bool draw_rescue_banner(const Sim *sim, int centreX, int y)
     for (int b = 0; b < BED_COUNT; b++) {
         const Patient *p = sim->beds[b].occupant;
         if (p && p->id > rescueLastId && p->rescue) { arrived = true; rescueService = p->rescueService; }
+    }
+    for (const Patient *p = sim->inbound; p != NULL; p = p->next) {      // called in: on its way
+        if (p->id > rescueLastId) { arrived = true; rescueService = p->rescueService; }
     }
     rescueLastId = newest;
     if (arrived) rescueUntil = GetTime() + 4.0;

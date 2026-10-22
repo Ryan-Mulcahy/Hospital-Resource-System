@@ -93,6 +93,13 @@ static const UpperRoom ROOMS[UPPER_ROOMS] = {
     [CAFE]     = { 2, -1,              "CAFE",           -16.5f,  -4.2f, WING_X,   7.6f, { 185, 110,  55, 255 }, DOOR_WING,  -2.45f, 15.0f },
 };
 
+// The short names for the number keys, e.g. "1 CT  2 Ultrasound"
+static const char *KEY_NAME[UPPER_ROOMS] = {
+    [CT] = "CT", [ULTRA] = "Ultrasound", [CATH] = "Cardiology", [ICU] = "ICU", [PHARM] = "Pharmacy",
+    [LAB] = "Lab", [STAFF] = "Staff room", [PHYSIO] = "Physio", [DIALYSIS] = "Dialysis",
+    [MATERN] = "Maternity", [KIDS] = "Children", [CHAPEL] = "Chapel", [CAFE] = "Cafe",
+};
+
 // ---- Colours for this file ----
 #define C_MACHINE   (Color){ 228, 231, 237, 255 }   // white hospital equipment
 #define C_SCREEN    (Color){ 110, 170, 235, 255 }
@@ -409,6 +416,38 @@ const char *floors3d_name_at(int floor, float x, float z)
     return "OUTSIDE";
 }
 
+// The k-th room on a floor (k from 1, in the order of ROOMS[]), or -1.
+static int room_by_key(int floor, int k)
+{
+    for (int i = 0; i < UPPER_ROOMS; i++) {
+        if (ROOMS[i].floor != floor) continue;
+        if (--k == 0) return i;
+    }
+    return -1;
+}
+
+int floors3d_key_count(int floor)
+{
+    int n = 0;
+    for (int i = 0; i < UPPER_ROOMS; i++) if (ROOMS[i].floor == floor) n++;
+    return n;
+}
+
+const char *floors3d_key_name(int floor, int k)
+{
+    int i = room_by_key(floor, k);
+    return i < 0 ? "" : KEY_NAME[i];
+}
+
+float floors3d_key_focus(int floor, int k, Vector3 *centre)
+{
+    int i = room_by_key(floor, k);
+    if (i < 0) { *centre = v3(-1.0f, floor * FLOOR_H + 0.4f, -1.5f); return 30.0f; }
+    const UpperRoom *r = &ROOMS[i];
+    *centre = v3((r->x0 + r->x1) / 2, floor * FLOOR_H + 0.4f, (r->z0 + r->z1) / 2);
+    return r->camDist;
+}
+
 const char *floors3d_floor_name(int floor)
 {
     switch (floor) {
@@ -429,6 +468,8 @@ static void draw_queues(void)
             if (view3d_patient_walking(p->id)) continue;
             Facing f; bool seated;
             Vector3 s = queue_spot(r, k, &f, &seated);
+            // Someone who can't walk far is given a chair while they wait
+            if (!seated && (p->equipNeeds & EQUIP_BIT(EQUIP_WHEELCHAIR))) { furniture_chair(s, f, C_CHAIR); seated = true; }
             if (seated) person_seated(s, f, gown_colour(p), C_TROUSERS, C_HAIR, false);
             else draw_person(s, f, (Outfit){ gown_colour(p), C_TROUSERS, false, false, false, false }, false, 0);
         }

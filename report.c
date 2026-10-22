@@ -16,22 +16,22 @@
 #define LEFT_VALUE   470     // values are right-aligned to this x
 #define RIGHT_LABEL  540
 #define RIGHT_VALUE  870
-#define ROW          28
+#define ROW          26
  
 // Report buttons: "Patients treated", "Equipment & rooms", and continue.
 static Rectangle view_log_button(void)
 {
-    return (Rectangle){ SCREEN_W / 2 - 345, 470, 220, 50 };
+    return (Rectangle){ SCREEN_W / 2 - 345, 484, 220, 50 };
 }
 
 static Rectangle equipment_button(void)
 {
-    return (Rectangle){ SCREEN_W / 2 - 110, 470, 220, 50 };
+    return (Rectangle){ SCREEN_W / 2 - 110, 484, 220, 50 };
 }
  
 static Rectangle continue_button(void)
 {
-    return (Rectangle){ SCREEN_W / 2 + 125, 470, 220, 50 };
+    return (Rectangle){ SCREEN_W / 2 + 125, 484, 220, 50 };
 }
  
 static bool clicked(Rectangle r)
@@ -89,7 +89,7 @@ void draw_shift_report(const Sim *sim)
     bool night = (sim->shift == SHIFT_NIGHT);
  
     ClearBackground(C_BG);
-    Rectangle card = { 100, 30, 800, 545 };
+    Rectangle card = { 100, 25, 800, 555 };
     DrawRectangleRounded(card, 0.05f, 8, C_CARD);
     DrawRectangleRoundedLines(card, 0.05f, 8, C_EDGE);
  
@@ -117,7 +117,7 @@ void draw_shift_report(const Sim *sim)
     row("Sent to a doctor", TextFormat("%d", s->sawDoctor), LEFT_LABEL, LEFT_VALUE, y);    y += ROW;
     int tests = 0;                                     // every room after A&E except the ward
     for (int r = 0; r < ROOM_TYPES; r++) if (r != ROOM_WARD) tests += s->sentTo[r];
-    row("Sent for tests / care", TextFormat("%d", tests), LEFT_LABEL, LEFT_VALUE, y);     y += ROW;
+    row("Visits to rooms after A&E", TextFormat("%d", tests), LEFT_LABEL, LEFT_VALUE, y); y += ROW;
     row("Admitted to the ward", TextFormat("%d", s->sentTo[ROOM_WARD]), LEFT_LABEL, LEFT_VALUE, y); y += ROW;
     row("Helicopter rescues", TextFormat("%d", s->rescues), LEFT_LABEL, LEFT_VALUE, y);
     // Right column: waiting times and resource use
@@ -140,6 +140,8 @@ void draw_shift_report(const Sim *sim)
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
     float drUse = 100.0f * s->doctorBusyTime / (DOCTORS_ON(sim->shift) * SHIFT_LENGTH);
     row(TextFormat("Doctors busy (%d)", DOCTORS_ON(sim->shift)), TextFormat("%.0f%%", drUse),
+        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
+    row("On-call doctor called", s->onCallCalls ? TextFormat("%dx, %.0f min", s->onCallCalls, sim_minutes(s->onCallTime)) : "no",
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 32;
     
         // After the night shift: totals for the whole day
@@ -165,9 +167,9 @@ void draw_shift_report(const Sim *sim)
     const char *vHint = "or press L";
     const char *eHint = "or press E";
     const char *bHint = "or press N";
-    DrawText(vHint, (int)(v.x + v.width / 2 - MeasureText(vHint, 14) / 2), 530, 14, C_MUTED);
-    DrawText(eHint, (int)(e.x + e.width / 2 - MeasureText(eHint, 14) / 2), 530, 14, C_MUTED);
-    DrawText(bHint, (int)(b.x + b.width / 2 - MeasureText(bHint, 14) / 2), 530, 14, C_MUTED);
+    DrawText(vHint, (int)(v.x + v.width / 2 - MeasureText(vHint, 14) / 2), 540, 14, C_MUTED);
+    DrawText(eHint, (int)(e.x + e.width / 2 - MeasureText(eHint, 14) / 2), 540, 14, C_MUTED);
+    DrawText(bHint, (int)(b.x + b.width / 2 - MeasureText(bHint, 14) / 2), 540, 14, C_MUTED);
 }
 
 // ---------------------------------------------------------------- equipment and rooms page

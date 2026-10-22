@@ -393,6 +393,9 @@ static void draw_queues(void)
             if (view3d_patient_walking(p->id)) continue;
             Facing f; bool seated;
             Vector3 s = queue_spot((RoomType)r, k, &f, &seated);
+            // Someone who can't walk far is given a chair while they wait
+            // (the porter has taken the wheelchair back for the next patient)
+            if (!seated && (p->equipNeeds & EQUIP_BIT(EQUIP_WHEELCHAIR))) { chair(s, f, C_CHAIR); seated = true; }
             if (seated) seated_person(s, f, gown_colour(p), C_TROUSERS, C_HAIR, false);
             else draw_person(s, f, (Outfit){ gown_colour(p), C_TROUSERS, false, false, false, false }, false, 0);
         }
@@ -613,7 +616,7 @@ static void draw_xray(void)
     const Patient *xp = in_room(ROOM_XRAY, 0);
     if (xp != NULL) {
         lying_person(v3(tx, 0, tz), FACE_EAST, 0.75f, 0.0f, gown_colour(xp), C_HAIR);
-        draw_box(v3(tx + 0.2f, 0.98f, tz), v3(0.46f, 0.04f, 0.62f), C_NAVY);       // lead apron over them
+        draw_box(v3(tx + 0.2f, 1.025f, tz), v3(0.46f, 0.03f, 0.50f), C_NAVY);      // lead apron, lying on top of them
     }
 
     // Ceiling rails, and the tube hanging from them, drifting along the table

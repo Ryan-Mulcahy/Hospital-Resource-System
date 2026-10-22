@@ -51,6 +51,7 @@
 #define C_PAVING    (Color){ 205, 200, 190, 255 }
 
 static bool ready = false;
+static float mainDoorOpen = 0.0f;       // the main entrance's sliding doors: 0 shut, 1 open
 static RenderTexture2D nameSign, mainSign, parkSign, busSign;
 
 // ------------------------------------------------------------------------
@@ -146,12 +147,37 @@ static void ground_storey(void)
     float d0 = MAIN_DOOR_X - 0.9f, d1 = MAIN_DOOR_X + 0.9f;
     facade_x(AE_FRONT_Z, -8.1f, d0, y, 1, C_BASE, 0, 99, 99);
     facade_x(AE_FRONT_Z, d1, BUILDING_X1, y, 1, C_BASE, 0, 99, 99);
-    draw_box(v3(MAIN_DOOR_X, 2.75f, AE_FRONT_Z), v3(1.8f, 0.9f, 0.3f), C_BASE);
-    draw_box(v3(MAIN_DOOR_X, 1.15f, AE_FRONT_Z + 0.05f), v3(1.8f, 2.3f, 0.08f), C_STEEL);
-    draw_lit_box(v3(MAIN_DOOR_X - 0.42f, 1.1f, AE_FRONT_Z + 0.1f), v3(0.78f, 2.1f, 0.02f), (Color){ 170, 210, 235, 255 });
-    draw_lit_box(v3(MAIN_DOOR_X + 0.42f, 1.1f, AE_FRONT_Z + 0.1f), v3(0.78f, 2.1f, 0.02f), (Color){ 170, 210, 235, 255 });
-    draw_box(v3(MAIN_DOOR_X, 2.62f, AE_FRONT_Z + 0.18f), v3(2.4f, 0.4f, 0.05f), C_BRAND);
-    sign_facing_front(mainSign.texture, MAIN_DOOR_X, 2.62f, AE_FRONT_Z + 0.21f, 2.34f, 0.34f);
+    draw_box(v3(MAIN_DOOR_X, 2.85f, AE_FRONT_Z), v3(1.8f, 0.7f, 0.3f), C_BASE);
+    outside3d_draw_main_doors();
+}
+
+void outside3d_draw_main_doors(void)
+{
+    if (!ready) outside3d_prepare();
+    float h = 2.3f;
+    draw_box(v3(MAIN_DOOR_X - 0.95f, h / 2, AE_FRONT_Z), v3(0.14f, h, 0.26f), C_STEEL);    // frame
+    draw_box(v3(MAIN_DOOR_X + 0.95f, h / 2, AE_FRONT_Z), v3(0.14f, h, 0.26f), C_STEEL);
+    draw_box(v3(MAIN_DOOR_X, h + 0.1f, AE_FRONT_Z), v3(2.04f, 0.2f, 0.26f), C_STEEL);
+    draw_box(v3(MAIN_DOOR_X, 2.72f, AE_FRONT_Z + 0.18f), v3(2.4f, 0.4f, 0.05f), C_BRAND);   // the sign
+    sign_facing_front(mainSign.texture, MAIN_DOOR_X, 2.72f, AE_FRONT_Z + 0.21f, 2.34f, 0.34f);
+    // the two door panels' frames, slid apart as far as they're open
+    float slide = mainDoorOpen * 0.8f;
+    for (int s = -1; s <= 1; s += 2) {
+        float x = MAIN_DOOR_X + s * (0.45f + slide);
+        draw_box(v3(x, 0.04f, AE_FRONT_Z), v3(0.88f, 0.08f, 0.06f), C_STEEL);
+        draw_box(v3(x, 2.24f, AE_FRONT_Z), v3(0.88f, 0.06f, 0.06f), C_STEEL);
+        draw_box(v3(x - s * 0.42f, 1.14f, AE_FRONT_Z), v3(0.05f, 2.2f, 0.06f), C_STEEL);
+    }
+}
+
+void outside3d_draw_main_door_glass(void)
+{
+    Color g = shade(C_GLASS, 1.0f);
+    float slide = mainDoorOpen * 0.8f;
+    for (int s = -1; s <= 1; s += 2) {
+        float x0 = MAIN_DOOR_X + s * (0.03f + slide), x1 = MAIN_DOOR_X + s * (0.87f + slide);
+        quad(v3(x0, 0.08f, AE_FRONT_Z), v3(x1, 0.08f, AE_FRONT_Z), v3(x1, 2.21f, AE_FRONT_Z), v3(x0, 2.21f, AE_FRONT_Z), g);
+    }
 }
 
 // One floor upstairs, closed up: a plain rectangle
@@ -337,15 +363,17 @@ static void visitors(void)
     Color tops[6] = { (Color){ 190, 90, 110, 255 }, (Color){ 90, 120, 90, 255 }, (Color){ 80, 110, 170, 255 },
                       (Color){ 210, 160, 70, 255 }, (Color){ 140, 80, 150, 255 }, (Color){ 70, 150, 160, 255 } };
     float t0 = (float)GetTime();
+    bool nearDoor = false;
     for (int i = 0; i < count; i++) {
         float period = 34.0f + i * 5.0f;
         float t = fmodf(t0 + i * 9.7f, period) / period;      // 0..1 round the loop
-        // the route: from their car, along the aisle, up the path, to the door
+        // the route: from their car, along the aisle, up the path, and in
+        // through the doors (they open as people come to them)
         float bx = bay_x((i * 3) % BAYS_PER_ROW);
-        Vector3 pts[4] = { v3(bx, 0, AISLE_Z), v3(PATH_X + 0.3f, 0, AISLE_Z), v3(PATH_X + 0.3f, 0, BUILDING_Z1 + 0.5f),
-                           v3(MAIN_DOOR_X + 0.3f, 0, AE_FRONT_Z + 0.4f) };
-        float lens[3], total = 0;
-        for (int k = 0; k < 3; k++) {
+        Vector3 pts[5] = { v3(bx, 0, AISLE_Z), v3(PATH_X + 0.3f, 0, AISLE_Z), v3(PATH_X + 0.3f, 0, BUILDING_Z1 + 0.5f),
+                           v3(MAIN_DOOR_X + 0.3f, 0, AE_FRONT_Z + 0.4f), v3(MAIN_DOOR_X + 0.3f, 0, AE_FRONT_Z - 1.0f) };
+        float lens[4], total = 0;
+        for (int k = 0; k < 4; k++) {
             lens[k] = fabsf(pts[k + 1].x - pts[k].x) + fabsf(pts[k + 1].z - pts[k].z);
             total += lens[k];
         }
@@ -356,15 +384,18 @@ static void visitors(void)
         else               { along = (t - 0.6f) / 0.4f; in = false; }
         float d = (in ? along : 1.0f - along) * total;
         int k = 0;
-        while (k < 2 && d > lens[k]) { d -= lens[k]; k++; }
+        while (k < 3 && d > lens[k]) { d -= lens[k]; k++; }
         float f = lens[k] > 0 ? d / lens[k] : 0;
         Vector3 a = pts[k], b = pts[k + 1];
         Vector3 p = v3(a.x + (b.x - a.x) * f, 0, a.z + (b.z - a.z) * f);
         float dx = (b.x - a.x) * (in ? 1 : -1), dz = (b.z - a.z) * (in ? 1 : -1);
         Facing face = fabsf(dx) > fabsf(dz) ? (dx > 0 ? FACE_EAST : FACE_WEST) : (dz > 0 ? FACE_SOUTH : FACE_NORTH);
+        float ddx = p.x - MAIN_DOOR_X, ddz = p.z - AE_FRONT_Z;
+        if (ddx * ddx + ddz * ddz < 2.0f * 2.0f) nearDoor = true;
         draw_person(p, face, (Outfit){ tops[i], C_TROUSERS, false, false, false, false }, true, t0 * 9.0f + i);
         if (i % 3 == 0) draw_box(v3(p.x + 0.35f, 0.75f, p.z), v3(0.25f, 0.3f, 0.1f), (Color){ 240, 120, 160, 255 });   // flowers
     }
+    mainDoorOpen += ((nearDoor ? 1.0f : 0.0f) - mainDoorOpen) * (1.0f - expf(-8.0f * GetFrameTime()));
 }
 
 // Flower beds, flags, benches, the bus stop and the hospital's sign

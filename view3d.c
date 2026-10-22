@@ -103,7 +103,8 @@ static float liftDoors[FLOORS];
 
 // ---- Where each member of staff is standing; they walk between spots ----
 static Vector3 nursePos[NURSE_COUNT];
-static Vector3 doctorPos[DOCTOR_COUNT];
+static Vector3 doctorPos[DOCTOR_SLOTS];
+static bool    onCallWasIn = false;    // to see the on-call doctor arrive
 static bool    staffPlaced = false;
 
 static bool night = false;      // set each frame: the night shift is on
@@ -134,7 +135,7 @@ static double lastChime = -100.0;     // the door chime plays at most once every
 
 // ---- Every patient, followed from frame to frame ----
 // Where the simulation has a patient. When it changes, they walk to the new place.
-typedef enum { AT_CHAIR, AT_OVERFLOW, AT_BED, AT_ROOM, AT_QUEUE } PlaceKind;
+typedef enum { AT_CHAIR, AT_OVERFLOW, AT_BED, AT_ROOM, AT_QUEUE, AT_EXIT, AT_INBOUND } PlaceKind;   // AT_EXIT: being taken out; AT_INBOUND: in the air
 
 typedef struct {
     PlaceKind kind;
@@ -142,7 +143,7 @@ typedef struct {
 } Place;
 
 #define MAX_TRACKED 256
-#define MAX_POINTS   20
+#define MAX_POINTS   32
 
 typedef struct {
     bool used;
@@ -221,7 +222,7 @@ static RenderTexture2D signWard, signWaiting, signEmergency, signStation,
                        signReception, signAmbulance, signEquipment, tvScreen;
 
 // ---- Walls that face the camera are drawn low, so they never block the view ----
-static bool lowBack, lowLeft, lowRight;
+static bool lowBack, lowLeft, lowRight, lowFront;
 
 // ------------------------------------------------------------------------
 // Small helpers
@@ -1490,6 +1491,12 @@ static void draw_room(const Sim *sim)
     draw_reception();
 
     draw_entrance();
+
+    // The front wall, with the hospital's main entrance in it (outside3d.c
+    // draws the doors, which open for the visitors from the car park)
+    draw_wall(v3(-6.0f, 0, AE_FRONT_Z), 4.2f, 0.2f, WALL_SIDE_H, lowFront);
+    draw_wall(v3(3.0f, 0, AE_FRONT_Z), 10.2f, 0.2f, WALL_SIDE_H, lowFront);
+    outside3d_draw_main_doors();
 }
 
 // ------------------------------------------------------------------------
@@ -1530,6 +1537,8 @@ static Vector3 place_stand(Place pl)
     switch (pl.kind) {
         case AT_CHAIR:    return v3(chair_x(pl.a), 0, chair_z(pl.a) + 0.35f);
         case AT_OVERFLOW: return v3(6.4f, 0, 5.25f);
+        case AT_EXIT:     return v3(9.3f, 0, 7.6f);                  // the end of the way out
+        case AT_INBOUND:  return v3(HELI_X - 1.0f, 0, HELI_Z + 0.6f);   // (in the helicopter)
         case AT_BED:      return bed_point(pl.a, (pl.a == RESUS_BED) ? -0.9f : 0.9f, 0, 0.4f);   // by the bed, on the corridor side
         default: {
             Vector3 pts[MAX_POINTS];
@@ -1635,9 +1644,16 @@ static void start_walk(Tracked *t, float duration)
     else                 t->walkSpeed = fminf(fmaxf(WALK_PACE, length / WALK_MAX_SECONDS), WALK_FAST);
 }
 
+static void walk_home(Tracked *t, float duration);
+
 // Plan a walk from where they are now (their old place) to `to`.
 static void walk_to(Tracked *t, Place to, float duration)
 {
+    if (to.kind == AT_EXIT) {                            // pushed out to the front door, then home
+        walk_home(t, duration);
+        t->place = to;
+        return;
+    }
     Place from = t->place;
     t->count = 0;
     if (to.kind == AT_BED && (from.kind == AT_CHAIR || from.kind == AT_OVERFLOW)) {
@@ -1652,7 +1668,7 @@ static void walk_to(Tracked *t, Place to, float duration)
 }
 
 // They've left the simulation (gone home): walk out of the hospital.
-static void walk_home(Tracked *t)
+static void walk_home(Tracked *t, float duration)
 {
     Place from = t->place;
     t->count = 0;
@@ -1673,7 +1689,7 @@ static void walk_home(Tracked *t)
     }
     route_out_of_doors(t);
     t->leaving = true;
-    start_walk(t, 0.0f);
+    start_walk(t, duration);
 }
 
 // ---- Ambulances and the helicopter ----
@@ -1855,7 +1871,8 @@ static void update_vehicles(float dt)
         else if (v->state == V_UNLOADING && v->t >= vehicle_unload_time(k)) {
             // Pulling out crosses the incoming lane, so wait while another ambulance
             // is coming in, or still pulling out itself (one at a time)
-            if (is_heli(k) || (!ambulance_coming_in(k) && !ambulance_leaving(k))) { v->state = V_LEAVING; v->t = 0; }
+            // (a helicopter waits until its patient is out: the simulation says when it's landed)
+            if (is_heli(k) ? !vehicle_has_passenger(k) : (!ambulance_coming_in(k) && !ambulance_leaving(k))) { v->state = V_LEAVING; v->t = 0; }
         }
         else if (v->state == V_LEAVING && v->t >= vehicle_leave_time(k)) { v->state = V_IDLE; v->t = 0; }
     }
@@ -1868,6 +1885,7 @@ static void unload_passengers(void)
         Tracked *t = &tracked[i];
         if (!t->used || t->vehicle < 0 || t->vehicle == HELI_WAITING) continue;
         if (vehicles[t->vehicle].state != V_UNLOADING) continue;
+        if (t->place.kind == AT_INBOUND) continue;     // not landed yet in the simulation: a moment more
         t->count = 0;
         if (is_heli(t->vehicle)) {
             t->pos = v3(HELI_X - 1.0f, 0, HELI_Z + 0.6f);
@@ -1909,6 +1927,7 @@ static void arrive(Tracked *t, const Patient *p)
 static void track_patient(const Patient *p, Place pl, bool fresh, bool resync)
 {
     Tracked *t = find_tracked(p->id);
+    if (t == NULL && pl.kind == AT_EXIT) return;   // already out of sight (or not seen until now)
     if (t == NULL) {
         for (int i = 0; i < MAX_TRACKED && t == NULL; i++) if (!tracked[i].used) t = &tracked[i];
         if (t == NULL) return;                // table full: they just appear
@@ -1922,7 +1941,7 @@ static void track_patient(const Patient *p, Place pl, bool fresh, bool resync)
         t->vehicle = -1;
         t->pos = place_stand(pl);
         t->seen = true;
-        if (fresh && !resync) arrive(t, p);
+        if ((fresh && !resync) || pl.kind == AT_INBOUND) arrive(t, p);   // (a rescue in the air waits for a helicopter)
         return;
     }
     t->seen = true;
@@ -1940,7 +1959,7 @@ static void track_patient(const Patient *p, Place pl, bool fresh, bool resync)
         return;
     }
     if (!moved) { t->place = pl; return; }
-    walk_to(t, pl, (pl.kind == AT_BED || pl.kind == AT_ROOM || pl.kind == AT_QUEUE) ? p->walkLeft : 0.0f);
+    walk_to(t, pl, (pl.kind == AT_BED || pl.kind == AT_ROOM || pl.kind == AT_QUEUE || pl.kind == AT_EXIT) ? p->walkLeft : 0.0f);
 }
 
 static void update_patients(const Sim *sim, float speed)
@@ -1977,6 +1996,12 @@ static void update_patients(const Sim *sim, float speed)
             track_patient(p, (Place){ AT_QUEUE, r, k < 4 ? k : 4 }, false, resync);
         }
     }
+    for (const Patient *p = sim->leaving; p != NULL; p = p->next) {
+        track_patient(p, (Place){ AT_EXIT, 0, 0 }, false, resync);
+    }
+    for (const Patient *p = sim->inbound; p != NULL; p = p->next) {     // rescues in the air
+        track_patient(p, (Place){ AT_INBOUND, 0, 0 }, p->id > lastSeenId, resync);
+    }
     if (sim->nextId - 1 > lastSeenId) lastSeenId = sim->nextId - 1;
 
     // Anyone no longer in the simulation has gone home
@@ -1984,7 +2009,7 @@ static void update_patients(const Sim *sim, float speed)
         Tracked *t = &tracked[i];
         if (!t->used || t->seen || t->leaving) continue;
         if (t->vehicle >= 0) { t->used = false; continue; }      // left before getting out
-        walk_home(t);
+        walk_home(t, 0.0f);
     }
 
     // Vehicles and people move at the simulation's speed, so they keep up
@@ -2232,50 +2257,129 @@ static void glide_to(Vector3 target, float yaw, float pitch, float dist)
     camYaw += yaw;
 }
 
-// ---- The tour (T): the camera glides from shot to shot, turning slowly ----
+// ---- Places to look at: the number keys, and the tour (T) ----
+// The number keys change with the floor: on the ground floor they're the
+// rooms round A&E (see rooms3d.h); upstairs they're that floor's rooms (see
+// floors3d.h); outside they're spots round the building. T tours the whole
+// hospital, floor by floor and then outside, gliding from place to place.
 typedef struct {
-    int floor;                 // which floor to look at (VIEW_OUTSIDE: the outside)
-    int room;                  // a ground floor room to look at (1-7, see rooms3d.h), or 0
-    int upstairs;              // a room upstairs to look at (a RoomType), or -1
-    Vector3 target;            // otherwise, the point to look at (on that floor)
+    const char *name;
+    Vector3 target;
     float yaw, pitch, dist;
-    float turn;                // degrees a second it turns round while on this shot
-} Shot;
+} Spot;
 
-static const Shot TOUR[] = {
-    { 0, 0, -1, {  3.0f, 0.4f,  0.9f },   0.0f, 42.0f, 21.0f,  3.0f },   // A&E from the front
-    { 0, 0, -1, { -1.0f, 0.4f, -3.2f },  15.0f, 28.0f, 10.0f,  4.0f },   // along the beds
-    { 0, 0, -1, { -5.8f, 0.4f,  0.2f },  10.0f, 35.0f,  8.0f,  4.0f },   // the equipment bay
-    { 0, 0, -1, {  2.5f, 0.4f,  4.0f }, -35.0f, 32.0f, 11.0f,  4.0f },   // the waiting room
-    { 0, 0, -1, { 13.5f, 0.4f,  3.0f }, -60.0f, 24.0f, 14.0f,  5.0f },   // the ambulance bays
-    { 0, 1, -1, { 0, 0, 0 },             20.0f, 45.0f,  0.0f,  4.0f },   // the ward
-    { 0, 5, -1, { 0, 0, 0 },            -20.0f, 45.0f,  0.0f,  4.0f },   // the operating theatre
-    { 1, 0, ROOM_ICU,        { 0, 0, 0 },  10.0f, 46.0f,  0.0f,  3.0f },   // upstairs: intensive care
-    { 1, 0, ROOM_CT,         { 0, 0, 0 }, -15.0f, 48.0f,  0.0f,  4.0f },   // the CT scanner
-    { 1, 0, ROOM_CARDIO,     { 0, 0, 0 },  20.0f, 46.0f,  0.0f,  4.0f },   // the cath lab
-    { 2, 0, ROOM_MATERNITY,  { 0, 0, 0 },  10.0f, 46.0f,  0.0f,  3.0f },   // maternity
-    { 2, 0, ROOM_CHILDREN,   { 0, 0, 0 }, -10.0f, 46.0f,  0.0f,  3.0f },   // the children's ward
-    { 2, 0, ROOM_DIALYSIS,   { 0, 0, 0 },   0.0f, 48.0f,  0.0f,  4.0f },   // dialysis
-    { VIEW_OUTSIDE, 0, -1, { -3.0f, 3.0f,  4.0f },  25.0f, 22.0f, 40.0f,  3.0f },   // the whole building
-    { VIEW_OUTSIDE, 0, -1, { -4.0f, 1.0f, 12.0f }, -20.0f, 18.0f, 22.0f,  3.0f },   // the car park and the entrance
-    { VIEW_OUTSIDE, 0, -1, {  3.0f, 0.4f,  0.9f },  60.0f, 12.0f, 34.0f,  2.0f },   // low, towards the sky
+// Extra shots for the ground floor's tour, before its rooms
+static const Spot GROUND_TOUR[] = {
+    { "A&E",            {  3.0f, 0.4f,  0.9f },   0.0f, 42.0f, 21.0f },
+    { "the beds",       { -1.0f, 0.4f, -3.2f },  15.0f, 28.0f, 10.0f },
+    { "equipment bay",  { -5.8f, 0.4f,  0.2f },  10.0f, 35.0f,  8.0f },
+    { "waiting room",   {  2.5f, 0.4f,  4.0f }, -35.0f, 32.0f, 11.0f },
+    { "ambulance bays", { 13.5f, 0.4f,  3.0f }, -60.0f, 24.0f, 14.0f },
 };
-#define TOUR_SHOTS ((int)(sizeof TOUR / sizeof TOUR[0]))
-#define SHOT_SECONDS 7.0f
+#define GROUND_TOUR_SHOTS ((int)(sizeof GROUND_TOUR / sizeof GROUND_TOUR[0]))
 
+// Outside: number keys 0 to 6, and the outside tour
+static const Spot OUTSIDE_SPOTS[] = {
+    { "Whole building", { -3.0f, 3.0f,  2.0f },  25.0f, 24.0f, 42.0f },
+    { "Main entrance",  { -3.0f, 1.0f,  7.5f }, -15.0f, 30.0f, 16.0f },
+    { "Car park",       { -4.0f, 0.4f, 15.0f },  20.0f, 35.0f, 20.0f },
+    { "A&E doors",      { 10.5f, 0.4f,  4.0f },  40.0f, 26.0f, 15.0f },
+    { "Helipad",        { 11.4f, 0.4f, -8.7f },  45.0f, 30.0f, 15.0f },
+    { "Roof",           { -4.0f, 9.8f, -3.0f },  15.0f, 48.0f, 26.0f },
+    { "Bus stop",       { 18.5f, 0.4f, 15.8f }, -70.0f, 22.0f, 10.0f },
+};
+#define OUTSIDE_SPOT_COUNT ((int)(sizeof OUTSIDE_SPOTS / sizeof OUTSIDE_SPOTS[0]))
+
+#define SHOT_SECONDS 4.5f
 static float tourTurn = 0.0f;     // how fast the current shot turns
+static int   tourFloor = 0;       // which floor the tour is on (VIEW_OUTSIDE: the outside)
 
-static void start_shot(int i)
+// How many shots the tour of a floor has
+static int tour_length(int floor)
 {
-    const Shot *s = &TOUR[i];
-    Vector3 target = s->target;
-    float dist = s->dist;
-    if (s->room != 0)      dist = rooms3d_focus(s->room, &target) * 0.85f;
-    if (s->upstairs >= 0)  dist = floors3d_focus(s->upstairs, &target) * 0.85f;
-    viewFloor = s->floor;
-    glide_to(target, s->yaw, s->pitch, dist);
-    tourTurn = s->turn;
+    if (floor == 0) return GROUND_TOUR_SHOTS + ROOM_COUNT;
+    if (floor >= VIEW_OUTSIDE) return OUTSIDE_SPOT_COUNT;
+    return floors3d_key_count(floor) + 2;          // the whole floor, each room, and the lifts
+}
+
+// Glide to the i-th shot of a floor's tour
+static void start_shot(int floor, int i)
+{
+    Vector3 target;
+    float yaw = (i % 2) ? 18.0f : -18.0f, pitch = 48.0f, dist;
+    if (floor == 0) {
+        if (i < GROUND_TOUR_SHOTS) {
+            const Spot *s = &GROUND_TOUR[i];
+            target = s->target; yaw = s->yaw; pitch = s->pitch; dist = s->dist;
+        } else {
+            dist = rooms3d_focus(i - GROUND_TOUR_SHOTS + 1, &target) * 0.85f;
+        }
+    } else if (floor >= VIEW_OUTSIDE) {
+        const Spot *s = &OUTSIDE_SPOTS[i % OUTSIDE_SPOT_COUNT];
+        target = s->target; yaw = s->yaw; pitch = s->pitch; dist = s->dist;
+    } else {
+        int n = floors3d_key_count(floor);
+        if (i == 0) {                                          // the whole floor
+            target = v3(-1.0f, floor * FLOOR_H + 0.4f, -1.5f); yaw = 0.0f; pitch = 52.0f; dist = 30.0f;
+        } else if (i <= n) {
+            dist = floors3d_key_focus(floor, i, &target) * 0.85f;
+        } else {                                               // the lifts
+            target = v3(LIFT_X, floor * FLOOR_H + 0.4f, 5.4f); yaw = 25.0f; pitch = 40.0f; dist = 9.0f;
+        }
+    }
+    viewFloor = floor;
+    glide_to(target, yaw, pitch, dist);
+    tourTurn = 4.0f;
     tourTime = 0.0f;
+}
+
+// A number key, 0 to 9, on the floor being looked at
+static void number_key(int k)
+{
+    Vector3 centre;
+    if (viewFloor == 0) {
+        if (k == 0)      glide_to(v3(3.0f, 0.4f, 0.9f), 0.0f, 42.0f, 21.0f);      // A&E
+        else if (k == 8) glide_to(v3(-4.0f, 0.4f, -3.2f), 0.0f, 58.0f, 38.0f);    // the whole floor
+        else if (k == 9) glide_to(v3(10.8f, 0.4f, -3.2f), 0.0f, 52.0f, 24.0f);    // helipad and bays
+        else {
+            float d = rooms3d_focus(k, &centre);                                 // 1 to 7: a room
+            glide_to(centre, 0.0f, 50.0f, d);
+        }
+    } else if (viewFloor >= VIEW_OUTSIDE) {
+        if (k < OUTSIDE_SPOT_COUNT) {
+            const Spot *s = &OUTSIDE_SPOTS[k];
+            glide_to(s->target, s->yaw, s->pitch, s->dist);
+        }
+    } else {
+        int n = floors3d_key_count(viewFloor);
+        if (k == 0)              glide_to(v3(-1.0f, viewFloor * FLOOR_H + 0.4f, -1.5f), 0.0f, 52.0f, 30.0f);
+        else if (k <= n) {
+            float d = floors3d_key_focus(viewFloor, k, &centre);
+            glide_to(centre, 0.0f, 50.0f, d);
+        }
+        else if (k == 8)         glide_to(v3(LIFT_X, viewFloor * FLOOR_H + 0.4f, 5.4f), 25.0f, 40.0f, 9.0f);
+    }
+}
+
+// The line of number keys for the floor being looked at, for the help text
+static const char *number_key_help(void)
+{
+    static char text[256];
+    if (viewFloor == 0) return "0 A&E   1 Ward   2 X-ray   3 MRI   4 Bloods   5 Theatre   6 Nursery   7 Admin   8 Whole floor   9 Helipad";
+    int used = 0;
+    text[0] = '\0';
+    if (viewFloor >= VIEW_OUTSIDE) {
+        for (int k = 0; k < OUTSIDE_SPOT_COUNT; k++) {
+            used += snprintf(text + used, sizeof text - used, "%d %s   ", k, OUTSIDE_SPOTS[k].name);
+        }
+    } else {
+        used += snprintf(text + used, sizeof text - used, "0 Whole floor   ");
+        for (int k = 1; k <= floors3d_key_count(viewFloor); k++) {
+            used += snprintf(text + used, sizeof text - used, "%d %s   ", k, floors3d_key_name(viewFloor, k));
+        }
+        snprintf(text + used, sizeof text - used, "8 Lifts");
+    }
+    return text;
 }
 
 // Look at another floor (or, with VIEW_OUTSIDE, the outside of the
@@ -2299,6 +2403,8 @@ static void set_view_floor(int f)
 // (in HUD units; set while drawing, checked when the mouse is clicked)
 static Rectangle floorButton[FLOORS + 1];
 
+static Camera3D make_camera(void);
+
 // Stop the tour and stop following anyone: the mouse or a key took over.
 static void manual_camera(void)
 {
@@ -2313,26 +2419,17 @@ void view3d_update_camera(void)
     if (IsKeyPressed(KEY_PAGE_DOWN)) { manual_camera(); set_view_floor(viewFloor - 1); }
     if (IsKeyPressed(KEY_F))         { manual_camera(); set_view_floor((viewFloor + 1) % (VIEW_OUTSIDE + 1)); }
 
-    // T: start or stop the tour
+    // T: start or stop the tour of the whole hospital: every room on the
+    // ground floor, then the first floor, the second, and the outside
     if (IsKeyPressed(KEY_T)) {
         touring = !touring;
         followId = 0;
-        if (touring) { tourShot = 0; start_shot(0); }
+        if (touring) { tourFloor = 0; tourShot = 0; start_shot(tourFloor, 0); }
     }
 
-    // Number keys: 0 A&E, 1-7 the other rooms, 8 the whole hospital
-    // (they're all on the ground floor, so they go back down there)
-    if (IsKeyPressed(KEY_ZERO))  { manual_camera(); viewFloor = 0; glide_to(v3(3.0f, 0.4f, 0.9f), 0.0f, 42.0f, 21.0f); }
-    if (IsKeyPressed(KEY_EIGHT)) { manual_camera(); viewFloor = 0; glide_to(v3(-4.0f, 0.4f, -3.2f), 0.0f, 58.0f, 38.0f); }
-    if (IsKeyPressed(KEY_NINE))  { manual_camera(); viewFloor = 0; glide_to(v3(10.8f, 0.4f, -3.2f), 0.0f, 52.0f, 24.0f); }   // helipad and bays
-    for (int room = 1; room <= ROOM_COUNT; room++) {
-        if (IsKeyPressed(KEY_ZERO + room)) {
-            manual_camera();
-            viewFloor = 0;
-            Vector3 centre;
-            float dist = rooms3d_focus(room, &centre);
-            glide_to(centre, 0.0f, 50.0f, dist);
-        }
+    // Number keys: the places on this floor (see number_key)
+    for (int k = 0; k <= 9; k++) {
+        if (IsKeyPressed(KEY_ZERO + k)) { manual_camera(); number_key(k); }
     }
 
     // A click (the button goes down and up without the mouse moving) picks a
@@ -2381,14 +2478,17 @@ void view3d_update_camera(void)
     // coming in cuts straight to the helipad
     if (touring) {
         tourTime += GetFrameTime();
-        if (heliCut) {
-            viewFloor = VIEW_OUTSIDE;                // the whole building, closed up
-            glide_to(v3(HELI_X - 1.0f, 0.4f, HELI_Z + 1.5f), -35.0f, 22.0f, 17.0f);
+        if (heliCut && (viewFloor == 0 || viewFloor >= VIEW_OUTSIDE)) {   // (the helipad is on the ground)
+            glide_to(v3(HELI_X, 0.4f, HELI_Z), 45.0f, 30.0f, 15.0f);     // from the far side, clear of the building
             tourTurn = 2.0f;
             tourTime = -4.0f;                        // stay a bit longer to watch it land
         } else if (tourTime > SHOT_SECONDS) {
-            tourShot = (tourShot + 1) % TOUR_SHOTS;
-            start_shot(tourShot);
+            tourShot++;
+            if (tourShot >= tour_length(tourFloor)) {          // on to the next floor (then round again)
+                tourShot = 0;
+                tourFloor = (tourFloor + 1) % (VIEW_OUTSIDE + 1);
+            }
+            start_shot(tourFloor, tourShot);
         }
         goalYaw += tourTurn * GetFrameTime();
         gliding = true;
@@ -2414,8 +2514,21 @@ void view3d_update_camera(void)
     if (camPitch > 85.0f) camPitch = 85.0f;
     if (camDist < 7.0f)  camDist = 7.0f;
     if (camDist > 48.0f) camDist = 48.0f;
-    camTarget.x = fminf(fmaxf(camTarget.x, -17.0f), 15.0f);
-    camTarget.z = fminf(fmaxf(camTarget.z, -13.0f), 8.0f);
+    if (viewFloor >= VIEW_OUTSIDE) {          // outside there's more to look at
+        camTarget.x = fminf(fmaxf(camTarget.x, -20.0f), 20.0f);
+        camTarget.z = fminf(fmaxf(camTarget.z, -16.0f), 19.0f);
+        // and the camera must never end up inside the building: tip it up until it's clear
+        for (int i = 0; i < 80 && camPitch < 85.0f; i++) {
+            Vector3 p = make_camera().position;
+            bool inside = p.x > BUILDING_X0 - 1.0f && p.x < BUILDING_X1 + 1.0f && p.z > BUILDING_Z0 - 1.0f &&
+                          p.z < BUILDING_Z1 + 1.0f && p.y < FLOORS * FLOOR_H + 3.0f;
+            if (!inside) break;
+            camPitch += 1.0f;
+        }
+    } else {
+        camTarget.x = fminf(fmaxf(camTarget.x, -17.0f), 15.0f);
+        camTarget.z = fminf(fmaxf(camTarget.z, -13.0f), 8.0f);
+    }
 }
 
 static Camera3D make_camera(void)
@@ -2585,7 +2698,8 @@ static const Patient *find_patient(const Sim *sim, int id, char *where, int size
         for (int s = 0; s < room->capacity; s++) {
             const Patient *p = room->in[s];
             if (p == NULL || p->id != id) continue;
-            if (p->walkLeft > 0.0f) snprintf(where, size, "Walking to %s", room->name);
+            if (p->walkLeft > 0.0f)      snprintf(where, size, "Walking to %s", room->name);
+            else if (p->roomLeft <= 0) snprintf(where, size, "Done in %s: waiting for a wheelchair", room->name);
             else snprintf(where, size, "In %s (%.0f min to go)", room->name, sim_minutes(p->roomLeft));
             return p;
         }
@@ -2594,6 +2708,16 @@ static const Patient *find_patient(const Sim *sim, int id, char *where, int size
             snprintf(where, size, "Queuing for %s", room->name);
             return p;
         }
+    }
+    for (const Patient *p = sim->leaving; p != NULL; p = p->next) {
+        if (p->id != id) continue;
+        snprintf(where, size, "Being taken to the front door");
+        return p;
+    }
+    for (const Patient *p = sim->inbound; p != NULL; p = p->next) {
+        if (p->id != id) continue;
+        snprintf(where, size, "In the air: landing in %.0f min", sim_minutes(p->roomLeft));
+        return p;
     }
     return NULL;
 }
@@ -2676,13 +2800,13 @@ static void hud(const Sim *sim, float speed, bool paused)
     const char *sky = (rain > 0.6f) ? "Heavy rain" : (rain > 0.1f) ? "Raining" :
                       (sunset > 0.3f) ? (night ? "Sunrise" : "Sunset") : (darkness > 0.6f) ? "Clear night" : "Clear";
     DrawText(sky, 20, 66, 14, soft);
-    if (touring) DrawText("CINEMATIC TOUR   T to stop", 20, 86, 16, C_BRAND);
+    if (touring) DrawText(TextFormat("CINEMATIC TOUR: %s   T to stop", floors3d_floor_name(tourFloor)), 20, 86, 16, C_BRAND);
     if (followId != 0) journey_card(sim);
 
     // Stats card, top right
     int busyN = 0, busyD = 0;
     for (int k = 0; k < NURSES_ON(sim->shift); k++)  if (sim->nurses[k].busyWithBed != -1) busyN++;
-    for (int k = 0; k < DOCTORS_ON(sim->shift); k++) if (sim->doctors[k].busyWithBed != -1) busyD++;
+    for (int k = 0; k < sim_doctors_on(sim); k++) if (sim->doctors[k].busyWithBed != -1) busyD++;
     int hh, mm;
     sim_time_of_day(sim, &hh, &mm);
 
@@ -2694,7 +2818,8 @@ static void hud(const Sim *sim, float speed, bool paused)
     DrawText(TextFormat("Waiting      %d", sim->waitingCount), x, y, 16, soft);       y += 22;
     DrawText(TextFormat("Treated      %d", sim->stats.treated), x, y, 16, soft);      y += 22;
     DrawText(TextFormat("Nurses busy  %d / %d", busyN, NURSES_ON(sim->shift)), x, y, 16, soft);   y += 22;
-    DrawText(TextFormat("Doctors busy %d / %d", busyD, DOCTORS_ON(sim->shift)), x, y, 16, soft);  y += 22;
+    DrawText(TextFormat("Doctors busy %d / %d%s", busyD, sim_doctors_on(sim), sim->onCall ? " +on call" : ""), x, y, 16,
+             sim->onCall ? C_EMERGENCY : soft);                                                               y += 22;
     DrawText(TextFormat("Speed        %.1fx", speed), x, y, 16, soft);
 
     // Equipment card: a row of blocks for each kind, filled for the ones in use
@@ -2730,8 +2855,7 @@ static void hud(const Sim *sim, float speed, bool paused)
 
     if (paused) DrawText("PAUSED", (int)hudW / 2 - MeasureText("PAUSED", 30) / 2, 20, 30, C_EMERGENCY);
 
-    DrawText("0 A&E   1 Ward   2 X-ray   3 MRI   4 Bloods   5 Theatre   6 Nursery   7 Admin   8 Whole hospital   9 Helipad",
-             20, (int)hudH - 70, 14, soft);
+    DrawText(number_key_help(), 20, (int)hudH - 70, 14, soft);
     DrawText("Drag to turn   Right-drag to move   Scroll to zoom   Click a patient to follow   T cinematic tour   F floors",
              20, (int)hudH - 50, 14, soft);
     DrawText("V 2D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   O operate   M mute",
@@ -2823,6 +2947,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     lowBack  = look.z / len < -0.30f;
     lowLeft  = look.x / len < -0.35f;
     lowRight = look.x / len >  0.35f;
+    lowFront = look.z / len >  0.30f;
     // Looking at the rooms behind or to the left of A&E: lower the A&E wall in the way
     if (camTarget.z < -4.5f && look.z > 0) lowBack = true;
     if (camTarget.x < -7.5f && look.x > 0) lowLeft = true;
@@ -2830,20 +2955,23 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     // Where everyone should be standing: by their bed, or at the station.
     if (!staffPlaced) {
         for (int k = 0; k < NURSE_COUNT; k++)  nursePos[k]  = v3(-3.0f + k * 1.0f, 0, DESK_Z + 0.9f);
-        for (int k = 0; k < DOCTOR_COUNT; k++) doctorPos[k] = v3( 1.6f + k * 1.0f, 0, DESK_Z + 0.9f);
+        for (int k = 0; k < DOCTOR_SLOTS; k++) doctorPos[k] = v3( 1.6f + k * 1.0f, 0, DESK_Z + 0.9f);
         staffPlaced = true;
     }
     // Staff go to their patient's bed once the patient is there; until then
     // (or with nobody to see) they wait at the nurses' station.
-    Vector3 nurseTarget[NURSE_COUNT], doctorTarget[DOCTOR_COUNT];
-    int nurseBed[NURSE_COUNT], doctorBed[DOCTOR_COUNT];
+    // The on-call doctor comes in through the front doors when they're called in
+    if (sim->onCall && !onCallWasIn) doctorPos[DOCTORS_ON(sim->shift)] = v3(DOOR_X - 0.3f, 0, 3.5f);
+    onCallWasIn = sim->onCall;
+    Vector3 nurseTarget[NURSE_COUNT], doctorTarget[DOCTOR_SLOTS];
+    int nurseBed[NURSE_COUNT], doctorBed[DOCTOR_SLOTS];
     for (int k = 0; k < NURSE_COUNT; k++) {
         nurseBed[k] = staff_bed(sim, sim->nurses[k].busyWithBed);
         int b = nurseBed[k];
         nurseTarget[k] = (b != -1) ? bed_point(b, 0.30f, 0, 1.55f)              // foot of the bed
                                    : v3(-3.0f + k * 1.0f, 0, DESK_Z + 0.9f);    // at the station
     }
-    for (int k = 0; k < DOCTOR_COUNT; k++) {
+    for (int k = 0; k < DOCTOR_SLOTS; k++) {
         doctorBed[k] = staff_bed(sim, sim->doctors[k].busyWithBed);
         int b = doctorBed[k];
         doctorTarget[k] = (b != -1) ? bed_point(b, -0.30f, 0, 1.55f)
@@ -2904,7 +3032,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
             nursePos[k] = walk_towards(nursePos[k], nurseTarget[k]);
             if (ground) draw_person(nursePos[k], face, nurse_outfit(), walking, (float)GetTime() * 14.0f + k);
         }
-        for (int k = 0; k < DOCTORS_ON(sim->shift); k++) {
+        for (int k = 0; k < sim_doctors_on(sim); k++) {
             bool walking = is_walking(doctorPos[k], doctorTarget[k]);
             Facing face = walking ? facing_for(doctorPos[k], doctorTarget[k])
                                   : (doctorBed[k] == RESUS_BED ? FACE_EAST : doctorBed[k] != -1 ? FACE_NORTH : FACE_SOUTH);
@@ -2915,6 +3043,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         draw_vehicles();
         draw_helipad_kit();
         if (!lowRight || !ground) draw_door_glass();      // see-through, so last
+        outside3d_draw_main_door_glass();
         if (ground) rooms3d_draw_glass();
         else if (viewFloor < VIEW_OUTSIDE) floors3d_draw_glass(viewFloor);
         draw_rain(cam);
@@ -2989,10 +3118,11 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         float h = 1.8f + (k % 2) * 0.3f;   // every second tag a little higher, so neighbours don't overlap
         label(sim->nurses[k].name, v3(nursePos[k].x, h, nursePos[k].z), cam, 12, WHITE, C_BRAND);
     }
-    for (int k = 0; k < DOCTORS_ON(sim->shift) && ground; k++) {
+    for (int k = 0; k < sim_doctors_on(sim) && ground; k++) {
         float h = 2.1f + (k % 2) * 0.3f;   // doctors' tags sit above the nurses'
-        label(TextFormat("Dr %s", sim->doctors[k].name), v3(doctorPos[k].x, h, doctorPos[k].z),
-              cam, 12, WHITE, C_INK);
+        bool onCall = (k >= DOCTORS_ON(sim->shift));
+        label(TextFormat(onCall ? "Dr %s (on call)" : "Dr %s", sim->doctors[k].name), v3(doctorPos[k].x, h, doctorPos[k].z),
+              cam, 12, WHITE, onCall ? C_EMERGENCY : C_INK);
     }
     int seats = CHAIR_ROWS * CHAIRS_PER_ROW;
     if (sim->waitingCount > seats && ground) {

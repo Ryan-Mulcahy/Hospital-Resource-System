@@ -51,6 +51,13 @@ float floors3d_focus(int room, Vector3 *centre);
 // The name of the place at (x, z) on floor 1 or 2, e.g. "ICU" or "CORRIDOR".
 const char *floors3d_name_at(int floor, float x, float z);
 
+// The number keys on a floor upstairs: 1, 2, 3... are its rooms in turn.
+// How many there are, the short name for key k (e.g. "ICU"), and the
+// middle of that room and a good camera distance for it.
+int floors3d_key_count(int floor);
+const char *floors3d_key_name(int floor, int k);
+float floors3d_key_focus(int floor, int k, Vector3 *centre);
+
 // What's on each floor, e.g. "FIRST FLOOR".
 const char *floors3d_floor_name(int floor);
 

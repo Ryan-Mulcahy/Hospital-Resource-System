@@ -25,7 +25,8 @@
 //
 // Controls: SPACE pause | UP/DOWN speed | E spawn emergency | R restart the day
 //           H helicopter rescue | O operate (the mini-game) | M sound on/off
-//           F11 full screen on/off
+//           F11 full screen on/off (the window has a title bar to minimise it;
+//           in full screen, F11 first)
 //           N continue to the next shift, L view patients treated,
 //           E equipment and rooms (report screen)
 //           wheel or UP/DOWN scroll, B go back (patients-treated page)
@@ -61,12 +62,21 @@ static Camera2D fit_screen(void)
 
 int main(void)
 {
-    // Smooth edges in 3D, and a window that can be any size
-    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
+    // Smooth edges in 3D, and a window that can be any size. It starts hidden,
+    // so the small starting size is never seen: it's made to fill the screen
+    // first (as a normal window, with its title bar, so it can be minimised),
+    // and only shown once it has been drawn at its full size.
+    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIDDEN);
     InitWindow(SCREEN_W, SCREEN_H, "Hospital Resource Simulator");
     SetWindowMinSize(SCREEN_W / 2, SCREEN_H / 2);
-    ToggleBorderlessWindowed();          // start full screen; F11 switches back to a window
+    MaximizeWindow();                    // fill the screen; F11 switches to full screen and back
     SetTargetFPS(60);
+    for (int i = 0; i < 3; i++) {        // let the new size take effect before showing the window
+        BeginDrawing();
+        ClearBackground(C_BG);
+        EndDrawing();
+    }
+    ClearWindowState(FLAG_WINDOW_HIDDEN);
     sound_init();                        // after the window; quietly does nothing without a sound device
  
     Image logo = LoadImage("logo.png");

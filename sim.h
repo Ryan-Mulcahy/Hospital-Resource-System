@@ -18,6 +18,26 @@
 #define NIGHT_DOCTORS 1
 #define NURSES_ON(shift)  ((shift) == SHIFT_NIGHT ? NIGHT_NURSES  : NURSE_COUNT)
 #define DOCTORS_ON(shift) ((shift) == SHIFT_NIGHT ? NIGHT_DOCTORS : DOCTOR_COUNT)
+
+// When too many patients are waiting for a doctor, an on-call doctor is
+// called in. They take the next place after the shift's doctors
+// (doctors[DOCTORS_ON(shift)]), and go home once nobody is waiting for a doctor.
+#define DOCTOR_SLOTS   (DOCTOR_COUNT + 1)   // room for the shift's doctors and one on call
+#define ON_CALL_AT     4         // patients waiting for a doctor before one is called in
+#define ON_CALL_DELAY  3.0f      // seconds (12 minutes) for them to get to the hospital
+
+// A patient waiting for a doctor isn't left alone: a free nurse stays with
+// them and starts their treatment at half speed, but can only get it this
+// far on their own (the rest needs the doctor).
+#define NURSE_HELP_SPEED 0.5f
+#define NURSE_HELP_LIMIT 0.5f
+
+// Helicopters: a rescue lands HELI_FLIGHT seconds after it's called, and
+// only one can be on the helipad at a time, so landings are at least
+// HELI_PAD_GAP apart. The patient is then wheeled in from the helipad.
+#define HELI_FLIGHT    7.0f
+#define HELI_PAD_GAP  13.0f
+#define HELI_WALK_IN   4.0f
  
 // Night arrivals, in tenths of a second: one patient every 2.0 to 4.0 seconds
 #define NIGHT_GAP_MIN 20
@@ -29,7 +49,8 @@
 // The 3D view times their walks to match these.
 #define WALK_TO_BED    3.0f      // seconds from the waiting room to an A&E bed
 #define WALK_TO_ROOM   6.0f      // seconds from A&E (or another room) to a room on the ground floor
-#define WALK_PER_FLOOR 2.0f      // ...and this much longer for each floor up (the lift)
+#define WALK_PER_FLOOR 2.0f      // ...and this much longer for each floor up or down (the lift)
+#define WALK_OUT       5.0f      // seconds to be pushed out to the front door in a wheelchair
 
 // The hospital has three floors: 0 the ground floor (A&E), 1 and 2 upstairs.
 #define FLOORS 3
@@ -58,14 +79,19 @@ typedef enum {
 } RoomType;
 #define ROOM_NONE      -1
 #define ROOM_SLOTS_MAX  4        // the most patients any room holds at once
+#define ROOM_TURNOVER   1.5f     // seconds (6 minutes) to get a place ready for the next
+                                 // patient, so the last one has left before the next comes in
 
 // Equipment is shared round the hospital, and there isn't always enough.
 // A patient who needs something has to wait for it to be free:
 //   heart monitors, ventilators, defibrillators and drip pumps before their
 //     treatment in A&E starts (they give them back when it's done);
 //   a ventilator for every patient in ICU, for their whole stay;
-//   a wheelchair (and a porter) to take them from A&E to their first room,
-//     so a patient waiting for one is still using their A&E bed.
+//   a wheelchair (and a porter) for every trip they make after their A&E
+//     treatment: from their A&E bed to their first room, from room to room,
+//     and out to the front door at the end. The porter takes it back as soon
+//     as they get there. A patient waiting for one stays where they are, so
+//     they're still using their A&E bed or their place in the room.
 typedef enum { EQUIP_MONITOR, EQUIP_VENTILATOR, EQUIP_DEFIB, EQUIP_DRIP, EQUIP_WHEELCHAIR, EQUIP_TYPES } EquipType;
 #define EQUIP_BIT(e) (1u << (e))
 
@@ -81,6 +107,7 @@ typedef struct {
     int capacity;            // patients at once
     float duration;          // simulated seconds each patient spends there
     Patient *in[ROOM_SLOTS_MAX]; // who is in each place (NULL = free)
+    float ready[ROOM_SLOTS_MAX]; // seconds until a place that's just been left is ready again
     Patient *queue;          // waiting for this room, most urgent first
     int queueCount;
 } SimRoom;
@@ -131,6 +158,9 @@ typedef struct {
     int sentTo[ROOM_TYPES];  // patients sent to each room after A&E
     int leftHospital;        // patients who finished in the rooms and went home
     int rescues;             // patients brought in by helicopter
+    int onCallCalls;         // times the on-call doctor was called in
+    float onCallTime;        // seconds the on-call doctor was in
+    float nurseHelpTime;     // seconds nurses spent starting treatment while waiting for a doctor
     int surgeriesPlayed;     // operations done in the operation game (not practice)
     int complications;       // ...of those, the ones where you touched the edge or ran out of time
 
@@ -151,7 +181,11 @@ typedef struct {
     int waitingCount;
     Bed beds[BED_COUNT];
     Nurse nurses[NURSE_COUNT];
-    Doctor doctors[DOCTOR_COUNT];
+    Doctor doctors[DOCTOR_SLOTS];  // the shift's doctors, then a place for one on call
+    bool onCall;             // an on-call doctor is in
+    float onCallComing;      // seconds until the on-call doctor arrives (< 0: nobody called)
+    Patient *inbound;        // helicopter rescues on their way, in landing order
+    float lastLanding;       // clock time the last rescue landed (or will)
     float clock;             // simulated seconds since 07:00 at the start of the day
     float nextArrival;       // clock time of the next random arrival
     float nextRescue;        // clock time of the next helicopter rescue (< 0: none)
@@ -159,6 +193,7 @@ typedef struct {
 
     SimRoom rooms[ROOM_TYPES];   // X-ray, MRI, bloods, theatre, the ward and the rooms upstairs
     Equipment equipment[EQUIP_TYPES];   // monitors, ventilators, defibrillators, drip pumps, wheelchairs
+    Patient *leaving;        // being pushed out to the front door in a wheelchair (they go home after)
  
     int day;                 // 1 for the first day, 2 for the next, ...
     ShiftType shift;         // which shift is on
@@ -195,6 +230,12 @@ void sim_add_rescue(Sim *sim);
 // Won: the rest of their surgery takes half as long. Lost: a complication,
 // so it takes 60% longer. Does nothing if they're no longer in theatre.
 void sim_surgery_result(Sim *sim, int id, bool won);
+
+// Doctors on duty now: the shift's doctors, plus the on-call doctor if they're in.
+int sim_doctors_on(const Sim *sim);
+
+// Helicopter rescues on their way in (not landed yet).
+int sim_inbound_count(const Sim *sim);
 
 // Patients in a room or waiting for one, across every room.
 int sim_patients_in_rooms(const Sim *sim);

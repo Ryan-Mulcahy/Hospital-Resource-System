@@ -23,7 +23,8 @@ typedef struct Patient {
     int rescueService;       // which service flew them in (a RescueService)
     int route[ROUTE_MAX];    // rooms to visit after A&E, in order (-1 = none)
     int routeStep;           // which of them they're on
-    float roomLeft;          // seconds left in the room they're in now
+    float roomLeft;          // seconds left in the room they're in now (a rescue on its
+                             // way in: seconds until the helicopter lands)
     float walkLeft;          // seconds until they reach their bed or room; nothing
                              // starts (assessment, treatment, a scan) until they're there
     unsigned equipNeeds;     // equipment they need (bits: 1 << EquipType, see sim.h)
