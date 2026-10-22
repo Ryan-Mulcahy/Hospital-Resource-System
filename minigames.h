@@ -2,7 +2,7 @@
 // which patients are ready for a game.
 //
 // Press G during a shift for the menu of eight games: the operation, "Shock!"
-// (the defibrillator), "Find the vein" (bloods), "Hold still" (X-ray and CT),
+// (the defibrillator), "Centrifuge" (bloods), "Hold still" (X-ray and CT),
 // "Triage call", "Pharmacy rush", "Blue lights" (the ambulance) and
 // "Touchdown" (the rescue helicopter). Each card says whether a real patient
 // is ready for that game or it would be a practice round, and how you've done
@@ -10,8 +10,9 @@
 // patients in. Pick one with 1-8 or a click; after the game you're back at
 // the menu. G or BACKSPACE goes back to the hospital.
 //
-// O still starts the operation straight away, as before. While the menu or a
-// game is on screen, the simulation waits.
+// Four games also have their own key to go straight in: O the operation,
+// S Shock!, X Hold still and P Pharmacy rush. While the menu or a game is on
+// screen, the simulation waits.
 
 #ifndef MINIGAMES_H
 #define MINIGAMES_H
@@ -23,7 +24,7 @@
 typedef enum {
     MINIGAME_OPERATION,      // 1 the operation (theatre)
     MINIGAME_SHOCK,          // 2 Shock! (the defibrillator, in A&E)
-    MINIGAME_VEIN,           // 3 Find the vein (bloods)
+    MINIGAME_SPIN,           // 3 Balance the centrifuge (bloods)
     MINIGAME_SCAN,           // 4 Hold still (X-ray and CT)
     MINIGAME_TRIAGE,         // 5 Triage call (three new arrivals)
     MINIGAME_PHARMACY,       // 6 Pharmacy rush
@@ -38,7 +39,7 @@ void minigames_watch(const Sim *sim);
 // Open the menu (G).
 void minigames_open_menu(void);
 
-// Go straight into one game, without the menu (O for the operation).
+// Go straight into one game, without the menu (the O, S, X and P keys).
 void minigames_start(Sim *sim, MiniGame game);
 
 // Should the helicopter's rotor sound play? (While the landing game's flying.)

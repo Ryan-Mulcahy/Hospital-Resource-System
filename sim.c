@@ -468,18 +468,18 @@ void sim_shock_result(Sim *sim, int id, bool won)
     }
 }
 
-void sim_vein_result(Sim *sim, int id, bool won)
+void sim_spin_result(Sim *sim, int id, bool won)
 {
     SimRoom *room = &sim->rooms[ROOM_BLOODS];
     for (int s = 0; s < room->capacity; s++) {
         Patient *p = room->in[s];
         if (p == NULL || p->id != id) continue;
-        sim->stats.veinsPlayed++;
+        sim->stats.spinsPlayed++;
         if (won) {
             p->roomLeft *= 0.5f;
         } else {
             p->roomLeft += 0.5f * room->duration;
-            sim->stats.veinsFailed++;
+            sim->stats.spinsFailed++;
         }
         return;
     }
@@ -1102,7 +1102,7 @@ void sim_update(Sim *sim, float dt)
             if (sim->onCallComing <= 0.0f) {
                 sim->onCall = true;
                 sim->onCallComing = -1.0f;
-                sim->doctors[onCallSlot].name = roster_doctor(roster_shift_number(sim->day, sim->shift), onCallSlot);
+                sim->doctors[onCallSlot].name = roster_on_call(roster_shift_number(sim->day, sim->shift));
                 sim->doctors[onCallSlot].busyWithBed = -1;
                 sim->stats.onCallCalls++;
             }

@@ -9,9 +9,9 @@
 #include "sim.h"
 
 // Camera controls: drag with the left mouse button to turn, drag with the
-// right button to move, scroll to zoom. Number keys fly to a room: 0 A&E,
-// 1-7 the other rooms (see rooms3d.h), 8 the whole hospital, 9 the helipad
-// and ambulance bays. F or PAGE UP / PAGE DOWN (or the floor buttons) go up
+// right button to move, scroll to zoom. Number keys fly to a room: 0 the
+// whole floor (as on every floor), 1-7 the other rooms (see rooms3d.h),
+// 8 A&E, 9 the helipad and ambulance bays. F or PAGE UP / PAGE DOWN (or the floor buttons) go up
 // and down the floors, and out to the view of the whole building. T starts
 // the tour; clicking a patient follows them.
 // Call once per frame while the 3D view is showing, before drawing.

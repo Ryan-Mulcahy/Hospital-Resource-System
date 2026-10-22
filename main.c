@@ -19,7 +19,7 @@
 //   minigames.c/.h the mini-game menu (G), and the eight games:
 //   opgame.c/.h   the operation (O)
 //   defibgame.c/.h "Shock!", the defibrillator
-//   veingame.c/.h "Find the vein", taking blood
+//   spingame.c/.h "Balance the centrifuge", spinning the blood samples
 //   scangame.c/.h "Hold still", X-ray and CT
 //   triagegame.c/.h "Triage call", sorting new arrivals
 //   pharmgame.c/.h "Pharmacy rush", making up a prescription
@@ -33,23 +33,25 @@
 // in the department at 19:00 are handed over to the night shift.
 //
 // Controls: SPACE pause | UP/DOWN speed | E spawn emergency | R restart the day
-//           H helicopter rescue | G mini games | O operate (straight into
-//           that game) | M sound on/off
+//           H helicopter rescue | G mini games | M sound on/off
+//           Straight into a game: O operation, S shock, X hold still (X-ray
+//           and CT), P pharmacy rush
 //           F11 full screen on/off (the window has a title bar to minimise it;
 //           in full screen, F11 first)
 //           N continue to the next shift, L view patients treated,
 //           E equipment and rooms (report screen)
-//           wheel or UP/DOWN scroll, B go back (patients-treated page)
+//           wheel or UP/DOWN scroll (patients-treated page); on those two
+//           pages, L or E again (or B) goes back to the report
 //           3D view: drag to turn, right-drag to move, scroll to zoom,
-//           0 A&E, 1-7 rooms, 8 whole hospital, 9 helipad and ambulance bay,
+//           0 whole floor, 1-7 rooms, 8 A&E, 9 helipad and ambulance bay,
 //           T cinematic tour, click a patient to follow them,
 //           F or PAGE UP/DOWN (or the floor buttons) to change floor or see the outside
 //           Mini games menu: 1-8 or click to play, G or BACKSPACE back.
 //           Operation: click and hold the item, drag it to the tray
 //           without touching the edge. Shock!: C charge, SPACE shock as a
-//           spike passes the zone. Find the vein: hold the right button to
-//           feel, left-click to go in, hold left to push, let go at the
-//           flashback. Hold still: frame on the ring, click when still.
+//           spike passes the zone. Centrifuge: click the slots to load the
+//           tubes so the rotor balances, then SPACE to spin.
+//           Hold still: frame on the ring, click when still.
 //           Triage call: drag each arrival to a box, ENTER to send them.
 //           Pharmacy rush: click the tubs. Blue lights: LEFT/RIGHT steer,
 //           DOWN brake. Touchdown: LEFT/RIGHT, hold UP to hover, DOWN to
@@ -149,12 +151,14 @@ int main(void)
             if (logScroll > maxScroll) logScroll = maxScroll;
             if (logScroll < 0)         logScroll = 0;
  
-            if (IsKeyPressed(KEY_B) || IsKeyPressed(KEY_BACKSPACE) || report_log_back_clicked()) {
+            // L (the key that opened it), B or BACKSPACE, or the button
+            if (IsKeyPressed(KEY_L) || IsKeyPressed(KEY_B) || IsKeyPressed(KEY_BACKSPACE) || report_log_back_clicked()) {
                 viewingLog = false;
             }
         } else if (sim.shiftOver && viewingKit) {
             // Equipment and rooms page: go back to the report
-            if (IsKeyPressed(KEY_B) || IsKeyPressed(KEY_BACKSPACE) || report_equipment_back_clicked()) {
+            // E (the key that opened it), B or BACKSPACE, or the button
+            if (IsKeyPressed(KEY_E) || IsKeyPressed(KEY_B) || IsKeyPressed(KEY_BACKSPACE) || report_equipment_back_clicked()) {
                 viewingKit = false;
             }
         } else if (sim.shiftOver) {
@@ -181,7 +185,12 @@ int main(void)
         } else {
             // Input
             if (IsKeyPressed(KEY_G)) minigames_open_menu();    // the mini-game menu
-            if (IsKeyPressed(KEY_O)) minigames_start(&sim, MINIGAME_OPERATION);   // operate: the patient in theatre, or practice
+            // Quick keys for four games (the patient who's ready, or practice):
+            // O operate, S shock, X X-ray/CT (hold still), P pharmacy rush
+            if (IsKeyPressed(KEY_O)) minigames_start(&sim, MINIGAME_OPERATION);
+            if (IsKeyPressed(KEY_S)) minigames_start(&sim, MINIGAME_SHOCK);
+            if (IsKeyPressed(KEY_X)) minigames_start(&sim, MINIGAME_SCAN);
+            if (IsKeyPressed(KEY_P)) minigames_start(&sim, MINIGAME_PHARMACY);
             if (IsKeyPressed(KEY_SPACE)) paused = !paused;
             if (IsKeyPressed(KEY_V)) view3d = !view3d;
             if (view3d) view3d_update_camera();

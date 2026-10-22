@@ -128,9 +128,9 @@ void draw_shift_report(const Sim *sim)
     row("Longest wait", TextFormat("%.0f min", sim_minutes(s->longestWait)),
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
     // The mini games (G): games played for real patients, and how many were won
-    int played = s->surgeriesPlayed + s->shocksPlayed + s->veinsPlayed + s->scansPlayed + s->triageGames +
+    int played = s->surgeriesPlayed + s->shocksPlayed + s->spinsPlayed + s->scansPlayed + s->triageGames +
                  s->pharmacyPlayed + s->drivesPlayed + s->landingsPlayed;
-    int lost = s->complications + s->shocksFailed + s->veinsFailed + s->scansFailed + s->triageGamesLost +
+    int lost = s->complications + s->shocksFailed + s->spinsFailed + s->scansFailed + s->triageGamesLost +
                s->pharmacyFailed + s->drivesSlow + s->landingsFailed;
     row("Mini games won / played", TextFormat("%d / %d", played - lost, played),
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
@@ -268,6 +268,7 @@ void draw_equipment_report(const Sim *sim)
     }
 
     button((Rectangle){ SCREEN_W / 2 - 120, 520, 240, 44 }, "Back to report", C_BRAND);
+    centered("or press E (or B)", 568, 14, C_MUTED);
 }
  
 // ---------------------------------------------------------------- treatment log page
@@ -387,7 +388,7 @@ void draw_patient_log(const Sim *sim, int scroll)
         int last = scroll + LOG_ROWS < count ? scroll + LOG_ROWS : count;
         DrawText(TextFormat("Showing %d-%d of %d", scroll + 1, last, count), COL_ID, 476, 14, C_MUTED);
     }
-    const char *hint = "Mouse wheel or Up/Down to scroll   B to go back";
+    const char *hint = "Mouse wheel or Up/Down to scroll   L (or B) to go back";
     DrawText(hint, COL_END - MeasureText(hint, 14), 476, 14, C_MUTED);
  
     // Scroll bar on the right, only when the list doesn't fit

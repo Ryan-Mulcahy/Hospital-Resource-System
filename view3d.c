@@ -2346,8 +2346,8 @@ static void number_key(int k)
 {
     Vector3 centre;
     if (viewFloor == 0) {
-        if (k == 0)      glide_to(v3(3.0f, 0.4f, 0.9f), 0.0f, 42.0f, 21.0f);      // A&E
-        else if (k == 8) glide_to(v3(-4.0f, 0.4f, -3.2f), 0.0f, 58.0f, 38.0f);    // the whole floor
+        if (k == 0)      glide_to(v3(-4.0f, 0.4f, -3.2f), 0.0f, 58.0f, 38.0f);    // the whole floor (0, as upstairs)
+        else if (k == 8) glide_to(v3(3.0f, 0.4f, 0.9f), 0.0f, 42.0f, 21.0f);      // A&E
         else if (k == 9) glide_to(v3(10.8f, 0.4f, -3.2f), 0.0f, 52.0f, 24.0f);    // helipad and bays
         else {
             float d = rooms3d_focus(k, &centre);                                 // 1 to 7: a room
@@ -2373,7 +2373,7 @@ static void number_key(int k)
 static const char *number_key_help(void)
 {
     static char text[256];
-    if (viewFloor == 0) return "0 A&E   1 Ward   2 X-ray   3 MRI   4 Bloods   5 Theatre   6 Nursery   7 Admin   8 Whole floor   9 Helipad";
+    if (viewFloor == 0) return "0 Whole floor   1 Ward   2 X-ray   3 MRI   4 Bloods   5 Theatre   6 Nursery   7 Admin   8 A&E   9 Helipad";
     int used = 0;
     text[0] = '\0';
     if (viewFloor >= VIEW_OUTSIDE) {
@@ -2904,7 +2904,7 @@ static void hud(const Sim *sim, float speed, bool paused)
     DrawText(number_key_help(), 20, (int)hudH - 70, 14, soft);
     DrawText("Drag to turn   Right-drag to move   Scroll to zoom   Click a patient to follow   T cinematic tour   F floors",
              20, (int)hudH - 50, 14, soft);
-    DrawText("V 2D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   G games   O operate   M mute",
+    DrawText("V 2D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   G games (or O S X P)   M mute",
              20, (int)hudH - 30, 14, soft);
 }
 

@@ -165,8 +165,8 @@ typedef struct {
     int complications;       // ...of those, the ones where you touched the edge or ran out of time
     int shocksPlayed;        // the defibrillator game, on real patients
     int shocksFailed;
-    int veinsPlayed;         // the find-the-vein game, on real patients
-    int veinsFailed;
+    int spinsPlayed;         // the centrifuge game (bloods), on real patients
+    int spinsFailed;
     int scansPlayed;         // the hold-still game in X-ray and CT, on real patients
     int scansFailed;         // ...blurry shots that needed a retake
     int pharmacyPlayed;      // the pharmacy rush game, on real patients
@@ -261,10 +261,11 @@ int sim_inbound_count(const Sim *sim);
 // longer, by 30% of their whole treatment.
 void sim_shock_result(Sim *sim, int id, bool won);
 
-// The result of the find-the-vein game for the patient in bloods with this
-// id. Won: a clean first go, so the rest of their time there is halved.
-// Lost: the vein blew, so it takes longer (half as long again as usual).
-void sim_vein_result(Sim *sim, int id, bool won);
+// The result of the centrifuge game for the patient in bloods with this id.
+// Won: balanced, so the results are back quickly and the rest of their time
+// there is halved. Lost: the samples are re-run, so it takes longer (half as
+// long again as usual).
+void sim_spin_result(Sim *sim, int id, bool won);
 
 // The result of the hold-still game for the patient in X-ray or CT (`room`)
 // with this id. Won: a sharp image first time, so the rest of their time

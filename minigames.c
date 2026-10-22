@@ -1,5 +1,5 @@
 // minigames.c - the mini-game menu, and passing input and drawing on to
-// whichever game is being played (opgame.c, defibgame.c, veingame.c,
+// whichever game is being played (opgame.c, defibgame.c, spingame.c,
 // scangame.c, triagegame.c, pharmgame.c, drivegame.c, heligame.c).
 //
 // Everything is drawn in the same 1000x600 layout as the other 2D screens
@@ -12,7 +12,7 @@
 #include "draw.h"            // colours and screen size
 #include "opgame.h"
 #include "defibgame.h"
-#include "veingame.h"
+#include "spingame.h"
 #include "scangame.h"
 #include "triagegame.h"
 #include "pharmgame.h"
@@ -28,7 +28,7 @@ typedef struct {
     const char *name;
     const char *lines[3];        // what it is, on the menu card
     const char *rowName;         // its short name in the table and the bubbles, e.g. "SURGERY"
-    const char *shortKeys;       // ...and the keys that start it, e.g. "O" or "G 2"
+    const char *shortKeys;       // ...and the keys that start it: its own key ("O") or the menu ("G 3")
     Color colour;
 } GameInfo;
 
@@ -36,15 +36,15 @@ static const GameInfo INFO[MINIGAME_COUNT] = {
     { "Operation", { "Take the item out along", "the channel without", "touching the edge." },
       "SURGERY", "O", { 40, 140, 110, 255 } },
     { "Shock!", { "Charge, then shock as", "the spike passes the", "zone. Three good shocks." },
-      "DEFIB", "G 2", { 190, 60, 50, 255 } },
-    { "Find the vein", { "Feel for the vein, put", "the needle in, and stop", "when blood shows." },
+      "DEFIB", "S", { 190, 60, 50, 255 } },
+    { "Centrifuge", { "Load the blood tubes so", "the rotor balances, then", "spin it. Unbalanced: wobble!" },
       "BLOODS", "G 3", { 60, 100, 190, 255 } },
     { "Hold still", { "Line up the X-ray or CT", "and take the image when", "the patient is still." },
-      "SCAN", "G 4", { 70, 130, 170, 255 } },
+      "SCAN", "X", { 70, 130, 170, 255 } },
     { "Triage call", { "Three new arrivals: drag", "each to emergency, urgent", "or routine." },
       NULL, NULL, { 80, 90, 160, 255 } },
     { "Pharmacy rush", { "Click the right pills", "into the bag before the", "clock runs out." },
-      "PHARMACY", "G 6", { 60, 140, 80, 255 } },
+      "PHARMACY", "P", { 60, 140, 80, 255 } },
     { "Blue lights", { "Drive the ambulance in,", "weaving through traffic.", "Don't clip the cars!" },
       NULL, NULL, { 50, 70, 170, 255 } },
     { "Touchdown", { "Land the rescue", "helicopter on the pad", "in a gusty wind." },
@@ -58,7 +58,7 @@ static int offer_for(MiniGame g)
     switch (g) {
     case MINIGAME_OPERATION: return opgame_offer();
     case MINIGAME_SHOCK:     return defibgame_offer();
-    case MINIGAME_VEIN:      return veingame_offer();
+    case MINIGAME_SPIN:      return spingame_offer();
     case MINIGAME_SCAN:      return scangame_offer();
     case MINIGAME_PHARMACY:  return pharmgame_offer();
     case MINIGAME_LANDING:   return heligame_offer();
@@ -68,7 +68,7 @@ static int offer_for(MiniGame g)
 
 static bool game_on(void)
 {
-    return opgame_active() || defibgame_active() || veingame_active() || scangame_active() ||
+    return opgame_active() || defibgame_active() || spingame_active() || scangame_active() ||
            triagegame_active() || pharmgame_active() || drivegame_active() || heligame_active();
 }
 
@@ -78,7 +78,7 @@ void minigames_watch(const Sim *sim)
 {
     opgame_watch(sim);
     defibgame_watch(sim);
-    veingame_watch(sim);
+    spingame_watch(sim);
     scangame_watch(sim);
     pharmgame_watch(sim);
     heligame_watch(sim);
@@ -91,7 +91,7 @@ static void start_game(Sim *sim, MiniGame g)
     switch (g) {
     case MINIGAME_OPERATION: opgame_start(sim);     break;
     case MINIGAME_SHOCK:     defibgame_start(sim);  break;
-    case MINIGAME_VEIN:      veingame_start(sim);   break;
+    case MINIGAME_SPIN:      spingame_start(sim);   break;
     case MINIGAME_SCAN:      scangame_start(sim);   break;
     case MINIGAME_TRIAGE:    triagegame_start(sim); break;
     case MINIGAME_PHARMACY:  pharmgame_start(sim);  break;
@@ -120,7 +120,7 @@ void minigames_update(Sim *sim)
     if (game_on()) {
         opgame_update(sim);
         defibgame_update(sim);
-        veingame_update(sim);
+        spingame_update(sim);
         scangame_update(sim);
         triagegame_update(sim);
         pharmgame_update(sim);
@@ -152,7 +152,7 @@ void minigames_update(Sim *sim)
 // A little picture for each card, centred on (cx, cy)
 static void draw_icon(MiniGame g, float cx, float cy)
 {
-    Color steel = { 200, 205, 215, 255 }, skin = { 232, 190, 160, 255 };
+    Color steel = { 200, 205, 215, 255 };
     if (g == MINIGAME_OPERATION) {                   // tweezers over a channel
         DrawLineEx((Vector2){ cx - 50, cy + 18 }, (Vector2){ cx + 50, cy + 18 }, 14, steel);
         DrawLineEx((Vector2){ cx - 50, cy + 18 }, (Vector2){ cx + 50, cy + 18 }, 9, (Color){ 120, 40, 45, 255 });
@@ -165,11 +165,16 @@ static void draw_icon(MiniGame g, float cx, float cy)
         for (int i = 0; i + 1 < 6; i++) DrawLineEx(pts[i], pts[i + 1], 3, (Color){ 80, 255, 140, 255 });
         DrawTriangle((Vector2){ cx + 30, cy - 30 }, (Vector2){ cx + 18, cy - 4 }, (Vector2){ cx + 32, cy - 8 }, (Color){ 255, 210, 60, 255 });
         DrawTriangle((Vector2){ cx + 32, cy - 12 }, (Vector2){ cx + 20, cy - 8 }, (Vector2){ cx + 26, cy + 16 }, (Color){ 255, 210, 60, 255 });
-    } else if (g == MINIGAME_VEIN) {                 // an arm with a vein and a needle
-        DrawRectangleRounded((Rectangle){ cx - 60, cy - 8, 120, 34 }, 0.8f, 8, skin);
-        DrawLineEx((Vector2){ cx - 55, cy + 10 }, (Vector2){ cx + 55, cy + 4 }, 4, (Color){ 90, 110, 190, 200 });
-        DrawLineEx((Vector2){ cx - 30, cy - 26 }, (Vector2){ cx + 2, cy + 6 }, 3, steel);
-        DrawLineEx((Vector2){ cx - 42, cy - 38 }, (Vector2){ cx - 30, cy - 26 }, 10, (Color){ 230, 80, 80, 255 });
+    } else if (g == MINIGAME_SPIN) {                 // the rotor from above, with tubes in
+        DrawCircleV((Vector2){ cx, cy }, 32, (Color){ 60, 66, 76, 255 });
+        DrawCircleV((Vector2){ cx, cy }, 28, (Color){ 175, 182, 192, 255 });
+        for (int k = 0; k < 6; k++) {
+            float a = k * PI / 3;
+            Vector2 c = { cx + 19 * cosf(a), cy + 19 * sinf(a) };
+            DrawCircleV(c, 6, (Color){ 70, 76, 86, 255 });
+            if (k % 3 != 1) DrawCircleV(c, 4, k == 0 ? (Color){ 220, 50, 60, 255 } : (Color){ 250, 200, 60, 255 });
+        }
+        DrawCircleV((Vector2){ cx, cy }, 5, (Color){ 120, 126, 136, 255 });
     } else if (g == MINIGAME_SCAN) {                 // an X-ray of a hand in a frame
         DrawRectangle((int)cx - 40, (int)cy - 32, 80, 64, (Color){ 10, 20, 32, 255 });
         Color bone = { 190, 220, 245, 255 };
@@ -208,7 +213,7 @@ void minigames_draw(const Sim *sim, Camera2D fit)
 {
     if (opgame_active())    { opgame_draw(fit);    return; }
     if (defibgame_active()) { defibgame_draw(fit); return; }
-    if (veingame_active())  { veingame_draw(fit);  return; }
+    if (spingame_active())  { spingame_draw(fit);  return; }
     if (scangame_active())  { scangame_draw(fit);  return; }
     if (triagegame_active()) { triagegame_draw(fit); return; }
     if (pharmgame_active()) { pharmgame_draw(fit); return; }
@@ -225,9 +230,9 @@ void minigames_draw(const Sim *sim, Camera2D fit)
 
     // How each game has gone this shift (real patients only): played, and lost
     const ShiftStats *s = &sim->stats;
-    int played[MINIGAME_COUNT] = { s->surgeriesPlayed, s->shocksPlayed, s->veinsPlayed, s->scansPlayed,
+    int played[MINIGAME_COUNT] = { s->surgeriesPlayed, s->shocksPlayed, s->spinsPlayed, s->scansPlayed,
                                    s->triageGames, s->pharmacyPlayed, s->drivesPlayed, s->landingsPlayed };
-    int lost[MINIGAME_COUNT]   = { s->complications, s->shocksFailed, s->veinsFailed, s->scansFailed,
+    int lost[MINIGAME_COUNT]   = { s->complications, s->shocksFailed, s->spinsFailed, s->scansFailed,
                                    s->triageGamesLost, s->pharmacyFailed, s->drivesSlow, s->landingsFailed };
 
     Vector2 m = GetMousePosition();
@@ -242,6 +247,12 @@ void minigames_draw(const Sim *sim, Camera2D fit)
         if (hover) DrawRectangleRoundedLines(r, 0.08f, 10, (Color){ 255, 255, 255, 160 });
         DrawText(TextFormat("%d", i + 1), (int)r.x + 12, (int)r.y + 8, 24, (Color){ 255, 255, 255, 200 });
         DrawText(INFO[i].name, (int)r.x + 38, (int)r.y + 10, 20, WHITE);
+        const char *quick = INFO[i].shortKeys;          // its own key, if it has one (O, S, X, P)
+        if (quick != NULL && quick[0] != 'G') {
+            Rectangle chip = { r.x + r.width - 30, r.y + 8, 22, 22 };
+            DrawRectangleRounded(chip, 0.3f, 6, WHITE);
+            DrawText(quick, (int)(chip.x + 11) - MeasureText(quick, 18) / 2, (int)chip.y + 2, 18, c);
+        }
 
         draw_icon((MiniGame)i, r.x + r.width / 2, r.y + 78);
         for (int k = 0; k < 3; k++)
@@ -264,7 +275,7 @@ void minigames_draw(const Sim *sim, Camera2D fit)
         DrawText(score, (int)r.x + 14, (int)r.y + 192, 12, (Color){ 160, 172, 190, 255 });
     }
 
-    const char *hint = "1 to 8 or click to play      G or BACKSPACE back to the hospital";
+    const char *hint = "1 to 8 or click to play  (O S X P straight from the hospital)      G or BACKSPACE back";
     DrawText(hint, SCREEN_W / 2 - MeasureText(hint, 18) / 2, 562, 18, (Color){ 220, 228, 238, 255 });
     EndMode2D();
 }
@@ -316,7 +327,7 @@ void minigames_draw_mini_icon(MiniGame g, float cx, float cy, Color c)
         DrawLineEx((Vector2){ cx - 3, cy + 1 }, (Vector2){ cx + 3, cy }, 3, c);
         DrawLineEx((Vector2){ cx + 3, cy }, (Vector2){ cx - 3, cy + 7 }, 3, c);
         break;
-    case MINIGAME_VEIN:                              // a drop of blood
+    case MINIGAME_SPIN:                              // a drop of blood
         DrawCircleV((Vector2){ cx, cy + 2 }, 5, c);
         DrawTriangle((Vector2){ cx, cy - 7 }, (Vector2){ cx - 5, cy + 1 }, (Vector2){ cx + 5, cy + 1 }, c);
         break;
