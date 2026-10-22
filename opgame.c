@@ -111,17 +111,6 @@ void opgame_watch(const Sim *sim)
 
 int opgame_offer(void) { return offerId; }
 
-void opgame_draw_offer(int centreX, int y)
-{
-    if (offerId == 0 || state != GAME_OFF) return;
-    float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 5.0f);
-    const char *text = TextFormat("SURGERY READY: patient %d   -   press O to operate", offerId);
-    int w = MeasureText(text, 18) + 30;
-    Color bg = { 40, 140, 110, (unsigned char)(200 + 55 * pulse) };
-    DrawRectangleRounded((Rectangle){ (float)(centreX - w / 2), (float)y, (float)w, 30 }, 0.5f, 8, bg);
-    DrawText(text, centreX - MeasureText(text, 18) / 2, y + 6, 18, WHITE);
-}
-
 // ---- Starting ----
 
 // Which operation suits the patient's condition. Burns use the zig-zag

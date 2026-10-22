@@ -3,8 +3,9 @@
 // Grab the item with the tweezers and drag it along the channel to the tray
 // without touching the edge. Touch the edge, or run out of time, and you lose.
 //
-// When a real patient gets to theatre, a "SURGERY READY" banner offers the
-// game (press O). The simulation waits while you play: win and the patient's
+// When a real patient gets to theatre, the game is offered (a bubble over
+// theatre, and a line in the "games ready" table: see minigames.h), and O
+// starts it. The simulation waits while you play: win and the patient's
 // surgery is quicker; lose and there's a complication and it takes longer.
 // Pressing O with nobody waiting is a practice round that changes nothing.
 
@@ -37,8 +38,5 @@ void opgame_draw(Camera2D fit);
 // The patient waiting in theatre who can be operated on, or 0 if nobody.
 int opgame_offer(void);
 
-// The "SURGERY READY - press O" banner, while a patient is waiting in theatre.
-// Centred on centreX with its top at y.
-void opgame_draw_offer(int centreX, int y);
 
 #endif
