@@ -118,7 +118,10 @@ void draw_shift_report(const Sim *sim)
     row("Average wait", TextFormat("%.0f min", sim_minutes(average_wait(s, NULL))),
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
     row("Longest wait", TextFormat("%.0f min", sim_minutes(s->longestWait)),
-        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 40;
+        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
+    // The operation game (O): operations you did on real patients, and how many went wrong
+    row("Operations / went wrong", TextFormat("%d / %d", s->surgeriesPlayed, s->complications),
+        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 32;
  
     float bedUse = 100.0f * s->bedBusyTime    / (BED_COUNT    * SHIFT_LENGTH);
     float docUse = 100.0f * s->nurseBusyTime / (NURSES_ON(sim->shift) * SHIFT_LENGTH);
@@ -129,7 +132,7 @@ void draw_shift_report(const Sim *sim)
         RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += ROW;
     float drUse = 100.0f * s->doctorBusyTime / (DOCTORS_ON(sim->shift) * SHIFT_LENGTH);
     row(TextFormat("Doctors busy (%d)", DOCTORS_ON(sim->shift)), TextFormat("%.0f%%", drUse),
-        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 40;   
+        RIGHT_LABEL, RIGHT_VALUE, y);                                                     y += 32;
     
         // After the night shift: totals for the whole day
     if (night) {

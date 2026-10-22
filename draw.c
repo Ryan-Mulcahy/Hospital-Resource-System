@@ -106,41 +106,47 @@ static void draw_rooms(const Sim *sim)
 
 static void draw_beds(const Sim *sim)
 {
-    const int x0 = 40, y0 = 300, w = 80, h = 130, gap = 16;
+    // 8 beds and the resus bay, narrower cards so they all fit in a row
+    const int x0 = 40, y0 = 300, w = 62, h = 130, gap = 6;
 
     DrawText("WARD", x0, y0 - 35, 20, t.ink);
 
     for (int i = 0; i < BED_COUNT; i++) {
         int x = x0 + i * (w + gap);
         const Patient *p = sim->beds[i].occupant;
+        bool resus = (i == RESUS_BED);
 
         Rectangle card = { x, y0, w, h };
         DrawRectangleRounded(card, 0.25f, 8, t.card);
-        DrawRectangleRoundedLines(card, 0.25f, 8, t.edge);
+        DrawRectangleRoundedLines(card, 0.25f, 8, resus ? C_EMERGENCY : t.edge);
 
         //DrawRectangle(x, y0, w, h, C_CARD);
         //DrawRectangleLines(x, y0, w, h, C_EDGE);
-        DrawText(TextFormat("Bed %d", i + 1), x + 8, y0 + 8, 14, t.ink);
+        if (resus) DrawText("Resus", x + 8, y0 + 8, 14, C_EMERGENCY);
+        else       DrawText(TextFormat("Bed %d", i + 1), x + 8, y0 + 8, 14, t.ink);
 
         if (p == NULL) {
-            DrawText("free", x + 24, y0 + 60, 14, t.light);
+            draw_text_centered("free", x + w / 2, y0 + 66, 14, w - 8, t.light);
             continue;
         }
 
-        draw_patient_dot(p, x + w / 2, y0 + 62, 20, 16);
+        draw_patient_dot(p, x + w / 2, y0 + 62, 18, 15);
 
         // Who is with them. Red text means the progress bar is stalled.
         int n = sim_nurse_at(sim, i);
         int d = sim_doctor_at(sim, i);
-        if (d != -1)             DrawText(TextFormat("Dr %s", sim->doctors[d].name), x + 8, y0 + 92, 12, t.ink);
-        else if (p->needsDoctor) DrawText("needs Dr",                    x + 8, y0 + 92, 12, t.alert);
-        else if (n != -1)        DrawText(sim->nurses[n].name,           x + 8, y0 + 92, 12, C_BRAND);
-        else                     DrawText("no nurse",                    x + 8, y0 + 92, 12, t.alert);
+        const char *who; Color col;
+        if (p->walkLeft > 0.0f)  { who = "arriving";                         col = t.muted; }
+        else if (d != -1)        { who = TextFormat("Dr %s", sim->doctors[d].name); col = t.ink; }
+        else if (p->needsDoctor) { who = "needs Dr";                         col = t.alert; }
+        else if (n != -1)        { who = sim->nurses[n].name;                col = C_BRAND; }
+        else                     { who = "no nurse";                         col = t.alert; }
+        draw_text_centered(who, x + w / 2, y0 + 98, 12, w - 6, col);
 
         // Treatment progress bar
         float done = 1.0f - p->treatmentLeft / p->treatmentTotal;
-        DrawRectangle(x + 8, y0 + h - 20, w - 16, 10, t.light);
-        DrawRectangle(x + 8, y0 + h - 20, (int)((w - 16) * done), 10, C_BRAND);
+        DrawRectangle(x + 6, y0 + h - 20, w - 12, 10, t.light);
+        DrawRectangle(x + 6, y0 + h - 20, (int)((w - 12) * done), 10, C_BRAND);
     }
 }
 
@@ -161,7 +167,7 @@ static void draw_nurses(const Sim *sim)
         //DrawRectangle(x, y0, w, h, busy ? C_BRAND : C_CARD);
         //DrawRectangleLines(x, y0, w, h, C_EDGE);
         DrawText(sim->nurses[d].name, x + 8, y0 + 6, 14, busy ? WHITE : t.ink);
-        DrawText(busy ? TextFormat("Bed %d", bed + 1) : "free",
+        DrawText(busy ? (bed == RESUS_BED ? "Resus" : TextFormat("Bed %d", bed + 1)) : "free",
                  x + 8, y0 + 22, 12, busy ? WHITE : t.light);
     }
 
@@ -175,7 +181,7 @@ static void draw_nurses(const Sim *sim)
         DrawRectangleRounded(card, 0.4f, 8, busy ? t.doctorBusy : t.card);
         DrawRectangleRoundedLines(card, 0.4f, 8, t.edge);
         DrawText(TextFormat("Dr %s", sim->doctors[d].name), x + 8, y0 + 6, 14, busy ? WHITE : t.ink);
-        DrawText(busy ? TextFormat("Bed %d", bed + 1) : "free",
+        DrawText(busy ? (bed == RESUS_BED ? "Resus" : TextFormat("Bed %d", bed + 1)) : "free",
                  x + 8, y0 + 22, 12, busy ? WHITE : t.light);
     }
 }
@@ -282,7 +288,7 @@ void draw_frame(const Sim *sim, float speed, bool paused)
     draw_beds(sim);
     draw_nurses(sim);
     draw_stats(sim, speed, paused);
-    DrawText("V 3D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   R reset",
+    DrawText("V 3D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   O operate   M mute   R reset",
              40, SCREEN_H - 40, 16, t.muted);
     draw_rescue_banner(sim, 810, 6);
 }

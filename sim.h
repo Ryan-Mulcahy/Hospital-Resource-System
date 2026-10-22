@@ -7,7 +7,9 @@
 #include <stdbool.h>
 #include "patient.h"
  
-#define BED_COUNT    6
+// 8 A&E beds, plus a resus bay (the last bed) kept for emergencies only
+#define BED_COUNT    9
+#define RESUS_BED    (BED_COUNT - 1)
 #define NURSE_COUNT 4
 #define DOCTOR_COUNT 2
  
@@ -22,6 +24,11 @@
 #define NIGHT_GAP_MAX 40
 // A nurse assesses every patient first, then decides if a doctor is needed.
 #define ASSESS_TIME       1.0f   // seconds a nurse takes to assess a patient
+
+// Patients have to walk to their bed or room before anything starts there.
+// The 3D view times their walks to match these.
+#define WALK_TO_BED    3.0f      // seconds from the waiting room to an A&E bed
+#define WALK_TO_ROOM   6.0f      // seconds from A&E (or another room) to a room
 
 // Helicopter rescues: 1 or 2 a shift. Rescued patients go to the front of the queue.
 #define RESCUE_CHANCE_SECOND 50  // % chance of a second rescue later in the shift
@@ -97,6 +104,8 @@ typedef struct {
     int sentTo[ROOM_TYPES];  // patients sent to each room after A&E
     int leftHospital;        // patients who finished in the rooms and went home
     int rescues;             // patients brought in by helicopter
+    int surgeriesPlayed;     // operations done in the operation game (not practice)
+    int complications;       // ...of those, the ones where you touched the edge or ran out of time
 } ShiftStats;
  
 typedef struct {
@@ -142,6 +151,11 @@ void sim_add_patient(Sim *sim, int severity);
 // straight to the front of the queue. Happens by itself 1 or 2 times a shift;
 // the H key adds one too.
 void sim_add_rescue(Sim *sim);
+
+// The result of the operation game for the patient in theatre with this id.
+// Won: the rest of their surgery takes half as long. Lost: a complication,
+// so it takes 60% longer. Does nothing if they're no longer in theatre.
+void sim_surgery_result(Sim *sim, int id, bool won);
 
 // Patients in a room or waiting for one, across every room.
 int sim_patients_in_rooms(const Sim *sim);

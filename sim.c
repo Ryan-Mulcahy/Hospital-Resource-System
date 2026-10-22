@@ -36,8 +36,8 @@ static int random_severity(void)
 
 // Name, places, and simulated seconds per patient (1 second = 4 minutes)
 static const struct { const char *name, *key; int capacity; float duration; } ROOM_INFO[ROOM_TYPES] = {
-    [ROOM_XRAY]    = { "X-ray",   "xray",    1,  3.0f },   // 12 minutes
-    [ROOM_MRI]     = { "MRI",     "mri",     1,  7.0f },   // about half an hour
+    [ROOM_XRAY]    = { "X-ray",   "xray",    1,  6.0f },   // 24 minutes on the table
+    [ROOM_MRI]     = { "MRI",     "mri",     1, 10.0f },   // 40 minutes in the scanner
     [ROOM_BLOODS]  = { "Bloods",  "bloods",  2,  2.0f },   //  8 minutes
     [ROOM_THEATRE] = { "Theatre", "theatre", 1, 15.0f },   // an hour
     [ROOM_WARD]    = { "Ward",    "ward",    4, 30.0f },   // two hours on the ward
@@ -97,6 +97,7 @@ static void send_on(Sim *sim, Patient *p)
         free(p);
         return;
     }
+    p->walkLeft = WALK_TO_ROOM;               // the walk there from where they are
     queue_insert(&sim->rooms[r].queue, p);   // most urgent first
     sim->rooms[r].queueCount++;
     sim->stats.sentTo[r]++;
@@ -111,6 +112,7 @@ static void update_rooms(Sim *sim, float dt)
         for (int s = 0; s < room->capacity; s++) {
             Patient *p = room->in[s];
             if (p == NULL) continue;
+            if (p->walkLeft > 0.0f) { p->walkLeft -= dt; continue; }   // still walking there
             p->roomLeft -= dt;
             if (p->roomLeft > 0.0f) continue;
             room->in[s] = NULL;
@@ -119,12 +121,18 @@ static void update_rooms(Sim *sim, float dt)
             if (last) sim->stats.leftHospital++;
             send_on(sim, p);
         }
+        for (Patient *q = room->queue; q != NULL; q = q->next) {   // walking to the queue
+            if (q->walkLeft > 0.0f) q->walkLeft -= dt;
+        }
         for (int s = 0; s < room->capacity; s++) {
             if (room->in[s] != NULL) continue;
             Patient *p = queue_pop(&room->queue);
             if (p == NULL) break;
             room->queueCount--;
             p->roomLeft = room->duration * (0.8f + (float)GetRandomValue(0, 40) / 100.0f);
+            // The scan or stay starts once they get there: the rest of their walk,
+            // or a step in through the door if they were already queuing outside
+            if (p->walkLeft < 1.0f) p->walkLeft = 1.0f;
             room->in[s] = p;
         }
     }
@@ -158,6 +166,7 @@ void sim_add_patient(Sim *sim, int severity)
     p->rescue = false;
     p->rescueService = 0;
     p->roomLeft = 0.0f;
+    p->walkLeft = 0.0f;
     set_route(p, p->condition->pathway);
     p->next = NULL;
  
@@ -188,6 +197,23 @@ void sim_add_rescue(Sim *sim)
     sim->stats.rescues++;
 }
  
+void sim_surgery_result(Sim *sim, int id, bool won)
+{
+    SimRoom *theatre = &sim->rooms[ROOM_THEATRE];
+    for (int s = 0; s < theatre->capacity; s++) {
+        Patient *p = theatre->in[s];
+        if (p == NULL || p->id != id) continue;
+        sim->stats.surgeriesPlayed++;
+        if (won) {
+            p->roomLeft *= 0.5f;
+        } else {
+            p->roomLeft *= 1.6f;
+            sim->stats.complications++;
+        }
+        return;
+    }
+}
+
 void sim_init(Sim *sim, int day)
 {
     *sim = (Sim){ 0 };
@@ -467,6 +493,10 @@ void sim_update(Sim *sim, float dt)
         int n = sim_nurse_at(sim, i);
         int d = sim_doctor_at(sim, i);
  
+        if (p->walkLeft > 0.0f) {           // still walking to the bed: the nurse waits for them
+            p->walkLeft -= dt;
+            continue;
+        }
         if (p->assessLeft > 0.0f) {
             if (n == -1) continue;          // in a bed, waiting for a nurse
             p->assessLeft -= dt;
@@ -501,14 +531,20 @@ void sim_update(Sim *sim, float dt)
     // 2b. The rooms after A&E
     update_rooms(sim, dt);
  
-    // 3. Admission: every free bed takes the most urgent waiting patient
-    for (int i = 0; i < BED_COUNT; i++) {
+    // 3. Admission: every free bed takes the most urgent waiting patient. The
+    //    resus bay is tried first but only takes emergencies; the queue is
+    //    sorted most urgent first, so if the front of it isn't an emergency
+    //    nobody waiting is, and the resus bay stays free for the next one.
+    for (int k = 0; k < BED_COUNT; k++) {
+        int i = (k == 0) ? RESUS_BED : k - 1;
         if (sim->beds[i].occupant != NULL) continue;
+        if (sim->waiting == NULL) break;
+        if (i == RESUS_BED && sim->waiting->severity != 1) continue;
  
         Patient *p = queue_pop(&sim->waiting);
-        if (p == NULL) break;
  
         sim->beds[i].occupant = p;
+        p->walkLeft = WALK_TO_BED;           // nothing starts until they get to the bed
         sim->waitingCount--;
         sim->stats.admitted++;
         float wait = sim->clock - p->arrivalTime;

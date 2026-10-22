@@ -21,6 +21,8 @@ typedef struct Patient {
     int route[2];            // rooms to visit after A&E, in order (-1 = none)
     int routeStep;           // which of them they're on
     float roomLeft;          // seconds left in the room they're in now
+    float walkLeft;          // seconds until they reach their bed or room; nothing
+                             // starts (assessment, treatment, a scan) until they're there
     struct Patient *next;    // next patient in the waiting queue (or a room's queue)
 } Patient;
 

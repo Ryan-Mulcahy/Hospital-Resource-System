@@ -11,6 +11,8 @@
 //   view3d.c/.h   the 3D view of A&E (V switches between 2D and 3D)
 //   rooms3d.c/.h  the rest of the hospital in 3D: ward, X-ray, MRI, bloods
 //                 and weight, operating theatre, nursery and admin office
+//   sound.c/.h    sound effects, made in code (no sound files needed)
+//   opgame.c/.h   the operation mini-game (O)
 //   main.c        window, main loop and keyboard input
 //
 // A run covers one day: the day shift (07:00 to 19:00), then the night shift
@@ -18,11 +20,15 @@
 // in the department at 19:00 are handed over to the night shift.
 //
 // Controls: SPACE pause | UP/DOWN speed | E spawn emergency | R restart the day
-//           H helicopter rescue | F11 full screen on/off
+//           H helicopter rescue | O operate (the mini-game) | M sound on/off
+//           F11 full screen on/off
 //           N continue to the next shift, L view patients treated (report screen)
 //           wheel or UP/DOWN scroll, B go back (patients-treated page)
 //           3D view: drag to turn, right-drag to move, scroll to zoom,
-//           0 A&E, 1-7 rooms, 8 whole hospital, 9 helipad and ambulance bay
+//           0 A&E, 1-7 rooms, 8 whole hospital, 9 helipad and ambulance bay,
+//           T cinematic tour, click a patient to follow them
+//           Operation game: click and hold the item, drag it to the tray
+//           without touching the edge. Q give up, R try again (practice)
  
 #include <math.h>
 #include "raylib.h"
@@ -32,6 +38,8 @@
 #include "roster.h"
 #include "view3d.h"
 #include "conditions.h"
+#include "sound.h"
+#include "opgame.h"
  
 // The 2D screens are laid out for SCREEN_W x SCREEN_H. In a bigger window
 // they're scaled up to fit, centred, with the mouse scaled to match so the
@@ -53,6 +61,7 @@ int main(void)
     SetWindowMinSize(SCREEN_W / 2, SCREEN_H / 2);
     ToggleBorderlessWindowed();          // start full screen; F11 switches back to a window
     SetTargetFPS(60);
+    sound_init();                        // after the window; quietly does nothing without a sound device
  
     Image logo = LoadImage("logo.png");
     
@@ -73,9 +82,12 @@ int main(void)
  
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_F11)) ToggleBorderlessWindowed();
+        if (IsKeyPressed(KEY_M)) sound_toggle_mute();
 
-        // The 2D screens are scaled to fit the window; the mouse has to be too
-        bool in3d = !showRoster && !sim.shiftOver && view3d;
+        // The 2D screens are scaled to fit the window; the mouse has to be too.
+        // (The operation game is a 2D screen, even from the 3D view.)
+        bool operating = !showRoster && !sim.shiftOver && opgame_active();
+        bool in3d = !showRoster && !sim.shiftOver && view3d && !operating;
         Camera2D fit = fit_screen();
         if (in3d) {
             SetMouseOffset(0, 0);
@@ -120,8 +132,12 @@ int main(void)
                 paused = false;
                 showRoster = true;           // show who's on before the shift starts
             }
+        } else if (operating) {
+            // The operation game: the simulation waits until it's over
+            opgame_update(&sim);
         } else {
             // Input
+            if (IsKeyPressed(KEY_O)) opgame_start(&sim);       // operate: the patient in theatre, or practice
             if (IsKeyPressed(KEY_SPACE)) paused = !paused;
             if (IsKeyPressed(KEY_V)) view3d = !view3d;
             if (view3d) view3d_update_camera();
@@ -137,11 +153,21 @@ int main(void)
  
             // Update
             if (!paused) sim_update(&sim, GetFrameTime() * speed);
+            opgame_watch(&sim);          // someone arrived in theatre: offer the game
+            sound_update(&sim, paused);  // siren and monitor alarm
+        }
+
+        // The helicopter and rain sounds belong to the 3D view
+        if (!in3d) {
+            sound_loop(SND_ROTOR, false, 0.0f);
+            sound_loop(SND_RAIN, false, 0.0f);
         }
  
         // Draw
         BeginDrawing();
-        if (!showRoster && !sim.shiftOver && view3d) {
+        if (!showRoster && !sim.shiftOver && opgame_active()) {
+            opgame_draw(fit_screen());                   // the operation game, scaled to fit
+        } else if (!showRoster && !sim.shiftOver && view3d) {
             view3d_draw(&sim, speed, paused);            // the whole window
         } else {
             fit = fit_screen();
@@ -149,7 +175,10 @@ int main(void)
             if (showRoster)                  draw_roster_screen(sim.day, sim.shift);
             else if (sim.shiftOver && viewingLog) draw_patient_log(&sim, logScroll);
             else if (sim.shiftOver)          draw_shift_report(&sim);
-            else                             draw_frame(&sim, speed, paused);
+            else {
+                draw_frame(&sim, speed, paused);
+                opgame_draw_offer(SCREEN_W / 2, SCREEN_H - 76);   // "SURGERY READY - press O"
+            }
             EndMode2D();
         }
         EndDrawing();
@@ -157,6 +186,7 @@ int main(void)
  
     sim_free(&sim);
     view3d_close();
+    sound_close();
     CloseWindow();
     return 0;
 }
