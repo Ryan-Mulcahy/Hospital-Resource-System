@@ -2882,10 +2882,9 @@ static void hud(const Sim *sim, float speed, bool paused)
     DrawText(TextFormat("Treated      %d", sim->stats.treated), x, y, 16, soft);      y += 22;
     DrawText(TextFormat("Nurses busy  %d / %d", busyN, sim_nurses_on(sim)), x, y, 16, soft);   y += 22;
     DrawText(TextFormat("Doctors busy %d / %d", busyD, sim_doctors_on(sim)), x, y, 16, sim->onCall ? C_EMERGENCY : soft);   y += 22;
-    // The on-call doctor (called in when the waiting room is full)
+    // The on-call doctor, only while they're on their way or in
     if (sim->onCall)                  DrawText("On-call doctor in", x, y, 16, C_EMERGENCY);
     else if (sim->onCallComing >= 0)  DrawText("On-call doctor coming", x, y, 16, C_URGENT);
-    else                              DrawText("On call: if it's full", x, y, 16, soft);
 
     // Equipment card: a row of blocks for each kind, filled for the ones in use
     Rectangle kitCard = { hudW - 230, 180, 216, 128 };

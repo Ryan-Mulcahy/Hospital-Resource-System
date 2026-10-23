@@ -308,9 +308,9 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
 
     DrawText(TextFormat("Doctors:    %d / %d%s", busyDoctors, sim_doctors_on(sim), sim->onCall ? "  (on call in)" : ""),
              x, y + 7 * line + 8, 16, sim->onCall ? t.alert : t.ink);
-    // The on-call doctor: called in when the waiting room is full
-    const char *onCallText = sim->onCall ? "On call:    in" : sim->onCallComing >= 0 ? "On call:    coming" : "On call:    if it's full";
-    DrawText(onCallText, x, y + 10 * line + 8, 16, (sim->onCall || sim->onCallComing >= 0) ? t.alert : t.ink);
+    // The on-call doctor, only while they're on their way or in
+    if (sim->onCall || sim->onCallComing >= 0)
+        DrawText(sim->onCall ? "On call:    in" : "On call:    coming", x, y + 10 * line + 8, 16, t.alert);
     DrawText(TextFormat("In rooms:   %d", sim_patients_in_rooms(sim)), x, y + 8 * line + 8, 16, t.ink);
     DrawText(TextFormat("Speed:      %.1fx", speed),                  x, y + 9 * line + 8, 16, t.ink);
 
