@@ -104,7 +104,7 @@ static float liftDoors[FLOORS];
 // ---- Where each member of staff is standing; they walk between spots ----
 static Vector3 nursePos[NURSE_MAX];
 static Vector3 doctorPos[DOCTOR_SLOTS];
-static bool    onCallWasIn = false;    // to see the on-call doctor arrive
+static int     onCallWasIn = 0;        // on-call doctors in last frame (to see the next one arrive)
 
 // Where free staff wait at the nurses' station: nurses along the left of the
 // desk, doctors along the right (closer together when there are more of them)
@@ -168,6 +168,7 @@ typedef struct {
     float walkSpeed;             // metres per second at 1x speed for this walk
     float phase;                 // for swinging arms and legs
     bool chair;                  // in a wheelchair, pushed by a porter
+    bool stretcher;              // flown in: on the crew's stretcher until they've been in an A&E bed
 } Tracked;
 
 static Tracked tracked[MAX_TRACKED];
@@ -1951,6 +1952,7 @@ static void track_patient(const Patient *p, Place pl, bool fresh, bool resync)
         t->place = pl;
         t->gown = severity_color(p->severity);
         t->rescue = p->rescue;
+        t->stretcher = p->rescue;
         t->service = p->rescueService;
         t->vehicle = -1;
         t->pos = place_stand(pl);
@@ -1973,6 +1975,9 @@ static void track_patient(const Patient *p, Place pl, bool fresh, bool resync)
         return;
     }
     if (!moved) { t->place = pl; return; }
+    // A rescue patient leaving A&E for a room (or home) has had their A&E
+    // treatment: off the stretcher (onto their feet, or a wheelchair)
+    if (pl.kind == AT_ROOM || pl.kind == AT_QUEUE || pl.kind == AT_EXIT) t->stretcher = false;
     walk_to(t, pl, (pl.kind == AT_BED || pl.kind == AT_ROOM || pl.kind == AT_QUEUE || pl.kind == AT_EXIT) ? p->walkLeft : 0.0f);
 }
 
@@ -2144,6 +2149,37 @@ static void draw_pushed(Vector3 p, Facing f, Color gown, float phase)
     draw_person(back, f, (Outfit){ (Color){ 40, 70, 110, 255 }, C_TROUSERS, false, false, false, false }, true, phase);
 }
 
+// A rescue patient lying on the helicopter crew's stretcher, wrapped in a
+// foil blanket, wheeled feet first by one of the crew. `f` is the way they're going.
+static void draw_stretcher(Vector3 p, Facing f, Color gown, float phase)
+{
+    partBase = p;
+    partFace = f;
+    Color steel = { 190, 196, 206, 255 }, dark = { 50, 54, 60, 255 };
+    part(0, 0.62f, 0, 0.68f, 0.07f, 1.90f, steel);                          // the frame
+    part(0, 0.69f, 0, 0.62f, 0.08f, 1.82f, (Color){ 240, 242, 246, 255 }); // the mattress
+    for (int k = 0; k < 4; k++) {                                            // legs and wheels
+        float x = (k % 2) ? 0.28f : -0.28f, z = (k / 2) ? 0.78f : -0.78f;
+        part(x, 0.33f, z, 0.05f, 0.56f, 0.05f, steel);
+        part(x, 0.06f, z, 0.07f, 0.12f, 0.12f, dark);
+    }
+    part(0, 0.86f, -0.10f, 0.42f, 0.22f, 0.70f, gown);                       // body (feet first, so the head's at the back)
+    part(0, 0.82f, 0.52f, 0.36f, 0.16f, 0.62f, C_TROUSERS);                  // legs
+    part(0, 0.88f, -0.62f, 0.30f, 0.26f, 0.30f, C_SKIN);                     // head
+    part(0, 0.88f, -0.79f, 0.32f, 0.28f, 0.06f, C_HAIR);
+    part(0, 0.99f, 0.20f, 0.50f, 0.05f, 1.10f, (Color){ 215, 220, 230, 255 }); // foil blanket
+    part(0, 1.00f, -0.40f, 0.40f, 0.06f, 0.12f, (Color){ 230, 120, 40, 255 }); // a strap
+    // one of the crew, pushing from the head end
+    Vector3 back = p;
+    switch (f) {
+        case FACE_SOUTH: back.z -= 1.35f; break;
+        case FACE_NORTH: back.z += 1.35f; break;
+        case FACE_EAST:  back.x -= 1.35f; break;
+        default:         back.x += 1.35f; break;
+    }
+    draw_person(back, f, (Outfit){ (Color){ 230, 120, 40, 255 }, (Color){ 40, 44, 60, 255 }, false, false, false, false }, true, phase);
+}
+
 static void draw_walkers(void)
 {
     for (int i = 0; i < MAX_TRACKED; i++) {
@@ -2157,7 +2193,9 @@ static void draw_walkers(void)
         rlPushMatrix();
         rlTranslatef(0, t->pos.y, 0);
         Vector3 at = v3(t->pos.x, 0, t->pos.z);
-        if (t->chair) {
+        if (t->stretcher) {
+            draw_stretcher(at, face, t->gown, t->phase);        // flown in: on a stretcher
+        } else if (t->chair) {
             draw_pushed(at, face, t->gown, t->phase);
         } else {
             draw_person(at, face, patient_outfit(t->gown), !inLift, t->phase);
@@ -2883,7 +2921,8 @@ static void hud(const Sim *sim, float speed, bool paused)
     DrawText(TextFormat("Nurses busy  %d / %d", busyN, sim_nurses_on(sim)), x, y, 16, soft);   y += 22;
     DrawText(TextFormat("Doctors busy %d / %d", busyD, sim_doctors_on(sim)), x, y, 16, sim->onCall ? C_EMERGENCY : soft);   y += 22;
     // The on-call doctor, only while they're on their way or in
-    if (sim->onCall)                  DrawText("On-call doctor in", x, y, 16, C_EMERGENCY);
+    if (sim->onCall > 0)
+        DrawText(TextFormat("On call      %d in%s", sim->onCall, sim->onCallComing >= 0 ? " +1" : ""), x, y, 16, C_EMERGENCY);
     else if (sim->onCallComing >= 0)  DrawText("On-call doctor coming", x, y, 16, C_URGENT);
 
     // Equipment card: a row of blocks for each kind, filled for the ones in use
@@ -3026,7 +3065,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     // Staff go to their patient's bed once the patient is there; until then
     // (or with nobody to see) they wait at the nurses' station.
     // The on-call doctor comes in through the front doors when they're called in
-    if (sim->onCall && !onCallWasIn) doctorPos[sim_shift_doctors(sim)] = v3(DOOR_X - 0.3f, 0, 3.5f);
+    if (sim->onCall > onCallWasIn) doctorPos[sim_shift_doctors(sim) + sim->onCall - 1] = v3(DOOR_X - 0.3f, 0, 3.5f);   // through the front doors
     onCallWasIn = sim->onCall;
     Vector3 nurseTarget[NURSE_MAX], doctorTarget[DOCTOR_SLOTS];
     int nurseBed[NURSE_MAX], doctorBed[DOCTOR_SLOTS];

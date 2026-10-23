@@ -20,10 +20,13 @@
 // When the waiting room is full, an on-call doctor is called in (see
 // WAITING_ROOM_SEATS below). They take the next place after the shift's doctors
 // (doctors[sim_shift_doctors(sim)]), and go home once it's quieter.
-#define DOCTOR_SLOTS   (DOCTOR_MAX + 1)     // room for the shift's doctors and one on call
-// The on-call doctor is called when the waiting room is full (every seat
-// taken) for ON_CALL_AFTER seconds without a break, and goes home once it's
-// down to half full and they've finished with their patient.
+#define ON_CALL_MAX    3                    // the most on-call doctors (how many is on the setup screen)
+#define DOCTOR_SLOTS   (DOCTOR_MAX + ON_CALL_MAX)   // room for the shift's doctors and the on-call ones
+// An on-call doctor is called when the waiting room is full (every seat
+// taken) for ON_CALL_AFTER seconds without a break. If it's still full for
+// that long after they arrive, the next one is called, up to the number on
+// the setup screen. They go home again one at a time (the last in first)
+// once it's down to half full and they've finished with their patient.
 #define WAITING_ROOM_SEATS 20    // seats in the waiting room (the 3D view has this many chairs)
 #define ON_CALL_AFTER  1.0f      // seconds (4 minutes) it has to stay full, so a moment's rush doesn't call them
 #define ON_CALL_HOME   (WAITING_ROOM_SEATS / 2)   // they go home once this few are waiting (or fewer)
@@ -124,6 +127,7 @@ typedef struct {
     int equipment[EQUIP_TYPES]; // how many of each piece of equipment
     bool powerCuts;          // can the power go off by itself (C still cuts it either way)
     bool carryOver;          // start the day with yesterday's patients still in (from day 2 on)
+    int onCall;              // on-call doctors who can be called in, one at a time (0 to ON_CALL_MAX)
 } Setup;
 
 // The usual setup: 4 nurses and 2 doctors by day, 2 and 1 at night, all 8
@@ -296,7 +300,7 @@ typedef struct {
     Bed beds[BED_COUNT];
     Nurse nurses[NURSE_MAX];
     Doctor doctors[DOCTOR_SLOTS];  // the shift's doctors, then a place for one on call
-    bool onCall;             // an on-call doctor is in
+    int onCall;              // on-call doctors in now (0 to setup.onCall)
     float onCallComing;      // seconds until the on-call doctor arrives (< 0: nobody called)
     float onCallPressure;    // seconds the waiting room has been full, without a break
     Patient *inbound;        // helicopter rescues on their way, in landing order

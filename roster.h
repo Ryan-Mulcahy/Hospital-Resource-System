@@ -15,8 +15,9 @@ int roster_shift_number(int day, ShiftType shift);
 const char *roster_nurse(const Setup *setup, int shiftNumber, int k);
 const char *roster_doctor(const Setup *setup, int shiftNumber, int k);
 
-// Name of the doctor on call during a shift (called in when it gets busy).
-const char *roster_on_call(int shiftNumber);
+// Name of the k-th on-call doctor for a shift (k from 0 to ON_CALL_MAX - 1;
+// they're called in one at a time when it gets busy).
+const char *roster_on_call(int shiftNumber, int k);
 
 // Give every nurse and doctor in the sim their name for the current shift.
 void roster_assign(Sim *sim);

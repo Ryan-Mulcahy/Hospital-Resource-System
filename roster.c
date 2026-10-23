@@ -2,6 +2,8 @@
 // Each shift takes the next staff from the pool, wrapping round at the end,
 // so nobody works two shifts in a row and everyone gets days and nights.
  
+#include <stdio.h>
+#include <string.h>
 #include "raylib.h"
 #include "draw.h"            // colours and screen size
 #include "roster.h"
@@ -19,7 +21,7 @@ static const char *DOCTOR_POOL[] = {
 // doctors above, so the on-call doctor is never someone who has just worked a
 // shift or is about to.
 static const char *ON_CALL_POOL[] = {
-    "Doyle", "Ryan", "Brennan"
+    "Doyle", "Ryan", "Brennan", "Kavanagh", "Gallagher", "Lynch"
 };
 #define NURSE_POOL_SIZE  (int)(sizeof NURSE_POOL / sizeof NURSE_POOL[0])
 #define DOCTOR_POOL_SIZE (int)(sizeof DOCTOR_POOL / sizeof DOCTOR_POOL[0])
@@ -50,10 +52,12 @@ const char *roster_doctor(const Setup *setup, int shiftNumber, int k)
     return DOCTOR_POOL[(start + k) % DOCTOR_POOL_SIZE];
 }
  
-const char *roster_on_call(int shiftNumber)
+const char *roster_on_call(int shiftNumber, int k)
 {
+    // Three a shift (ON_CALL_MAX), from the next three in the pool, so
+    // nobody's on call two shifts in a row
     int n = (int)(sizeof ON_CALL_POOL / sizeof ON_CALL_POOL[0]);
-    return ON_CALL_POOL[shiftNumber % n];
+    return ON_CALL_POOL[(shiftNumber * ON_CALL_MAX + k) % n];
 }
 
 void roster_assign(Sim *sim)
@@ -110,12 +114,21 @@ static void draw_team(const Setup *setup, int x, const char *heading, int day, S
         DrawText(TextFormat("Dr %s", roster_doctor(setup, s, k)), x + 20 + col * 150, y, 20, C_INK);
         if (d <= 2 || col == 1 || k == d - 1) y += 24;
     }
-    // The on-call doctor: at home unless they're needed (sim.c calls them in)
-    const char *onCall = TextFormat("Dr %s", roster_on_call(s));
+    // The on-call doctors: at home unless they're needed (sim.c calls them in)
+    if (setup->onCall == 0) {
+        DrawText("Nobody on call", x + 20, y, 16, C_MUTED);
+        return;
+    }
+    char names[96] = "";
+    for (int k = 0; k < setup->onCall; k++) {
+        char one[32];
+        snprintf(one, sizeof one, "%sDr %s", k ? ", " : "", roster_on_call(s, k));
+        strncat(names, one, sizeof names - strlen(names) - 1);
+    }
     DrawCircleLines(x + 6, y + 9, 6, C_EMERGENCY);
-    DrawText(onCall, x + 20, y, 20, C_INK);
-    DrawText("on call", x + 28 + MeasureText(onCall, 20), y + 4, 14, C_EMERGENCY);      y += 22;
-    DrawText(TextFormat("comes in if the waiting room is full (%d)", WAITING_ROOM_SEATS), x + 20, y, 12, C_MUTED);
+    DrawText("ON CALL", x + 20, y + 3, 12, C_EMERGENCY);
+    DrawText(names, x + 82, y, setup->onCall > 1 ? 16 : 20, C_INK);                 y += 22;
+    DrawText(TextFormat("called in when the waiting room is full (%d)", WAITING_ROOM_SEATS), x + 20, y, 12, C_MUTED);
 }
  
 void draw_roster_screen(const Setup *setup, int day, ShiftType shift)

@@ -306,11 +306,11 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     DrawText(TextFormat("Avg wait:   %.1f s", avgWait),               x, y + 5 * line + 8, 16, t.ink);
     DrawText(TextFormat("Nurses:    %d / %d", busyNurses, sim_nurses_on(sim)), x, y + 6 * line + 8, 16, t.ink);
 
-    DrawText(TextFormat("Doctors:    %d / %d%s", busyDoctors, sim_doctors_on(sim), sim->onCall ? "  (on call in)" : ""),
+    DrawText(TextFormat("Doctors:    %d / %d", busyDoctors, sim_doctors_on(sim)),
              x, y + 7 * line + 8, 16, sim->onCall ? t.alert : t.ink);
     // The on-call doctor, only while they're on their way or in
     if (sim->onCall || sim->onCallComing >= 0)
-        DrawText(sim->onCall ? "On call:    in" : "On call:    coming", x, y + 10 * line + 8, 16, t.alert);
+        DrawText(TextFormat("On call:    %d in%s", sim->onCall, sim->onCallComing >= 0 ? ", 1 coming" : ""), x, y + 10 * line + 8, 16, t.alert);
     DrawText(TextFormat("In rooms:   %d", sim_patients_in_rooms(sim)), x, y + 8 * line + 8, 16, t.ink);
     DrawText(TextFormat("Speed:      %.1fx", speed),                  x, y + 9 * line + 8, 16, t.ink);
 

@@ -92,6 +92,7 @@ void sim_default_setup(Setup *setup)
     setup->beds = BED_COUNT - 1;
     for (int e = 0; e < EQUIP_TYPES; e++) setup->equipment[e] = EQUIP_INFO[e].total;
     setup->powerCuts = true;
+    setup->onCall = 1;
 }
 
 static int clamp_int(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -104,6 +105,7 @@ void sim_clamp_setup(Setup *setup)
         setup->doctors[sh] = clamp_int(setup->doctors[sh], SETUP_DOCTORS_MIN, DOCTOR_MAX);
     }
     setup->beds = clamp_int(setup->beds, SETUP_BEDS_MIN, BED_COUNT - 1);
+    setup->onCall = clamp_int(setup->onCall, 0, ON_CALL_MAX);
     for (int e = 0; e < EQUIP_TYPES; e++) setup->equipment[e] = clamp_int(setup->equipment[e], 1, EQUIP_MAX_EACH);
 }
 
@@ -598,7 +600,7 @@ int sim_waiting_for_doctor(const Sim *sim)
 
 int sim_doctors_on(const Sim *sim)
 {
-    return sim_shift_doctors(sim) + (sim->onCall ? 1 : 0);
+    return sim_shift_doctors(sim) + sim->onCall;
 }
 
 // Rescues in the air: when one lands they go to the front of the queue
@@ -851,7 +853,7 @@ void sim_next_day(Sim *sim, const Setup *setup)
     // The new day's staff take over; the on-call doctor goes home
     for (int d = 0; d < NURSE_MAX; d++)    sim->nurses[d].busyWithBed = -1;
     for (int d = 0; d < DOCTOR_SLOTS; d++) sim->doctors[d].busyWithBed = -1;
-    sim->onCall = false;
+    sim->onCall = 0;
     sim->onCallComing = -1.0f;
     sim->onCallPressure = 0.0f;
     roster_assign(sim);
@@ -917,6 +919,7 @@ static int bed_needing_nurse(const Sim *sim)
     for (int i = 0; i < BED_COUNT; i++) {
         const Patient *p = sim->beds[i].occupant;
         if (p == NULL || p->needsDoctor || p->doneInAE || sim_nurse_at(sim, i) != -1) continue;
+        if (sim_doctor_at(sim, i) != -1) continue;       // a free doctor is already seeing them
  
         if (best == -1) { best = i; continue; }
         const Patient *b = sim->beds[best].occupant;
@@ -944,6 +947,33 @@ static int bed_needing_nurse(const Sim *sim)
  
 // Most urgent patient a nurse has sent to a doctor who doesn't have one yet,
 // or -1 if there is nobody.
+// A bed a free doctor can take on: a patient who doesn't need a doctor (yet)
+// with nobody looking after them, most urgent first. -1 if none.
+static int bed_for_free_doctor(const Sim *sim)
+{
+    int best = -1;
+    for (int i = 0; i < BED_COUNT; i++) {
+        const Patient *p = sim->beds[i].occupant;
+        if (p == NULL || p->needsDoctor || p->doneInAE || p->walkLeft > 0.0f) continue;
+        if (sim_nurse_at(sim, i) != -1 || sim_doctor_at(sim, i) != -1) continue;
+        if (best == -1) { best = i; continue; }
+        const Patient *b = sim->beds[best].occupant;
+        if (p->severity < b->severity || (p->severity == b->severity && p->arrivalTime < b->arrivalTime)) best = i;
+    }
+    return best;
+}
+
+// A doctor who's doing a nurse's work (seeing a patient who doesn't need a
+// doctor), to be called to a patient who does. -1 if none.
+static int doctor_on_nurse_work(const Sim *sim)
+{
+    for (int d = 0; d < sim_doctors_on(sim); d++) {
+        int b = sim->doctors[d].busyWithBed;
+        if (b != -1 && sim->beds[b].occupant && !sim->beds[b].occupant->needsDoctor) return d;
+    }
+    return -1;
+}
+
 static int bed_needing_doctor(const Sim *sim)
 {
     int best = -1;
@@ -1047,7 +1077,7 @@ void sim_start_night(Sim *sim)
     // their progress, and the night staff pick them up.
     for (int d = sim->setup.nurses[SHIFT_NIGHT]; d < NURSE_MAX; d++)     sim->nurses[d].busyWithBed = -1;
     for (int d = sim->setup.doctors[SHIFT_NIGHT]; d < DOCTOR_SLOTS; d++) sim->doctors[d].busyWithBed = -1;
-    sim->onCall = false;             // the on-call doctor goes home too
+    sim->onCall = 0;                 // the on-call doctors go home too
     sim->onCallComing = -1.0f;
     sim->onCallPressure = 0.0f;
 
@@ -1149,8 +1179,8 @@ static bool needs_wheelchair_to_leave(const Patient *p)
 // doctor can have a nurse with them, starting their treatment.)
 static bool staff_with(const Sim *sim, int bed, const Patient *p)
 {
-    if (p->needsDoctor && sim_doctor_at(sim, bed) != -1) return true;
-    return sim_nurse_at(sim, bed) != -1;
+    (void)p;
+    return sim_doctor_at(sim, bed) != -1 || sim_nurse_at(sim, bed) != -1;   // (a doctor can see anyone)
 }
 
 // How far a nurse can take the treatment of a patient who needs a doctor:
@@ -1277,7 +1307,7 @@ void sim_update(Sim *sim, float dt)
             continue;
         }
         if (p->assessLeft > 0.0f) {
-            if (n == -1) continue;          // in a bed, waiting for a nurse
+            if (n == -1 && d == -1) continue;   // in a bed, waiting for a nurse (or a free doctor)
             p->assessLeft -= dt;
             if (p->assessLeft <= 0.0f && needs_doctor(p)) {
                 p->needsDoctor = true;      // a doctor is needed; the nurse stays until one comes
@@ -1301,7 +1331,7 @@ void sim_update(Sim *sim, float dt)
             sim->nurses[n].busyWithBed = -1;
             n = -1;
         }
-        if (!p->needsDoctor && n == -1) continue;  // waiting for a nurse (theirs went home)
+        if (!p->needsDoctor && n == -1 && d == -1) continue;  // waiting for a nurse (theirs went home)
         if (still_needs(p) != 0) continue;         // waiting for equipment
  
         p->treatmentLeft -= dt * speed;
@@ -1309,12 +1339,14 @@ void sim_update(Sim *sim, float dt)
             sim->stats.treatedBySeverity[p->severity - 1]++;
  
             char who[TREATED_BY_LEN];
-            if (p->needsDoctor) staff_label(who, sizeof who, true,  sim->doctors[d].name, d);
-            else                staff_label(who, sizeof who, false, sim->nurses[n].name,  n);
+            // (a doctor, if one treated them: one sent by a nurse, or a free
+            // doctor who took a routine or urgent patient)
+            if (d != -1) staff_label(who, sizeof who, true,  sim->doctors[d].name, d);
+            else         staff_label(who, sizeof who, false, sim->nurses[n].name,  n);
             log_treated(sim, p, who);
  
-            if (p->needsDoctor) sim->doctors[d].busyWithBed = -1;
-            else                sim->nurses[n].busyWithBed = -1;
+            if (d != -1) sim->doctors[d].busyWithBed = -1;
+            if (n != -1) sim->nurses[n].busyWithBed = -1;
             sim->stats.treated++;
             give_back(sim, p, p->equipHeld);     // the equipment goes back for the next patient
             p->doneInAE = true;
@@ -1363,7 +1395,7 @@ void sim_update(Sim *sim, float dt)
     int needNurse = 0, freeNurses = 0;
     for (int i = 0; i < BED_COUNT; i++) {
         const Patient *p = sim->beds[i].occupant;
-        if (p && !p->needsDoctor && !p->doneInAE && sim_nurse_at(sim, i) == -1) needNurse++;
+        if (p && !p->needsDoctor && !p->doneInAE && sim_nurse_at(sim, i) == -1 && sim_doctor_at(sim, i) == -1) needNurse++;
     }
     for (int d = 0; d < sim_nurses_on(sim); d++) {
         int b = sim->nurses[d].busyWithBed;
@@ -1385,32 +1417,40 @@ void sim_update(Sim *sim, float dt)
         sim->nurses[d].busyWithBed = bed;
     }
  
-    // 5b. The on-call doctor: called in when the waiting room has been full
-    //     (WAITING_ROOM_SEATS or more waiting) for ON_CALL_AFTER seconds in a
-    //     row, arriving ON_CALL_DELAY later. They stay until the waiting room
-    //     is down to half full (ON_CALL_HOME) and they're free.
-    int onCallSlot = sim_shift_doctors(sim);
-    if (!sim->onCall) {
+    // 5b. The on-call doctors: one is called in when the waiting room has
+    //     been full (WAITING_ROOM_SEATS or more waiting) for ON_CALL_AFTER
+    //     seconds in a row, arriving ON_CALL_DELAY later; if it stays full that
+    //     long again, the next one, up to the setup's number. They take the
+    //     places after the shift's doctors, and go home one at a time (the
+    //     last in first) once it's down to half full (ON_CALL_HOME) and they're free.
+    int firstOnCall = sim_shift_doctors(sim);
+    if (sim->onCall < sim->setup.onCall) {
         if (sim->waitingCount >= WAITING_ROOM_SEATS) sim->onCallPressure += dt;
         else                                         sim->onCallPressure = 0.0f;
         if (sim->onCallPressure >= ON_CALL_AFTER && sim->onCallComing < 0.0f) sim->onCallComing = ON_CALL_DELAY;
         if (sim->onCallComing >= 0.0f) {
             sim->onCallComing -= dt;
             if (sim->onCallComing <= 0.0f) {
-                sim->onCall = true;
+                int slot = firstOnCall + sim->onCall;
+                sim->doctors[slot].name = roster_on_call(roster_shift_number(sim->day, sim->shift), sim->onCall);
+                sim->doctors[slot].busyWithBed = -1;
+                sim->onCall++;
                 sim->onCallComing = -1.0f;
-                sim->doctors[onCallSlot].name = roster_on_call(roster_shift_number(sim->day, sim->shift));
-                sim->doctors[onCallSlot].busyWithBed = -1;
+                sim->onCallPressure = 0.0f;              // the next one only if it stays full again
                 sim->stats.onCallCalls++;
                 add_event(sim, EVENT_ON_CALL);
             }
         }
     } else {
-        sim->stats.onCallTime += dt;
-        if (sim->waitingCount <= ON_CALL_HOME && sim->doctors[onCallSlot].busyWithBed == -1) sim->onCall = false;
+        sim->onCallPressure = 0.0f;
+    }
+    if (sim->onCall > 0) {
+        sim->stats.onCallTime += dt * sim->onCall;       // (doctor-time: two in for an hour is two hours)
+        int last = firstOnCall + sim->onCall - 1;
+        if (sim->waitingCount <= ON_CALL_HOME && sim->doctors[last].busyWithBed == -1 && sim->onCallComing < 0.0f) sim->onCall--;
     }
 
-        // 6. Doctor rounds: every free doctor goes to the most urgent patient
+    // 6. Doctor rounds: every free doctor goes to the most urgent patient
     //    a nurse has sent to a doctor
     for (int d = 0; d < sim_doctors_on(sim); d++) {
         if (sim->doctors[d].busyWithBed != -1) continue;
@@ -1418,6 +1458,22 @@ void sim_update(Sim *sim, float dt)
         int bed = bed_needing_doctor(sim);
         if (bed == -1) break;
  
+        sim->doctors[d].busyWithBed = bed;
+    }
+    // 6b. Patients who need a doctor come first: if one is still waiting, a
+    //     doctor who's seeing a routine or urgent patient leaves them (a
+    //     nurse picks them up, and their treatment so far isn't lost)
+    for (int bed = bed_needing_doctor(sim); bed != -1; bed = bed_needing_doctor(sim)) {
+        int d = doctor_on_nurse_work(sim);
+        if (d == -1) break;
+        sim->doctors[d].busyWithBed = bed;
+    }
+    // 6c. Doctors with nobody needing a doctor don't stand about: each free
+    //     one sees the most urgent patient who's waiting for a nurse
+    for (int d = 0; d < sim_doctors_on(sim); d++) {
+        if (sim->doctors[d].busyWithBed != -1) continue;
+        int bed = bed_for_free_doctor(sim);
+        if (bed == -1) break;
         sim->doctors[d].busyWithBed = bed;
     }
  

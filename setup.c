@@ -12,7 +12,7 @@
 #include "setup.h"
 
 // ---- The results of earlier shifts ----
-#define HISTORY 8            // the most shown (the oldest drop off)
+#define HISTORY 7            // the most shown (the oldest drop off)
 
 typedef struct {
     int day;
@@ -54,14 +54,16 @@ const char *setup_summary(const Setup *setup)
 // The things with - and + buttons, in order
 enum {
     ITEM_DAY_NURSES, ITEM_DAY_DOCTORS, ITEM_NIGHT_NURSES, ITEM_NIGHT_DOCTORS, ITEM_BEDS,
-    ITEM_EQUIP,                      // ...then one for each piece of equipment
-    ITEM_COUNT = ITEM_EQUIP + EQUIP_TYPES
+    ITEM_EQUIP,                      // ...then one for each piece of equipment,
+    ITEM_ON_CALL = ITEM_EQUIP + EQUIP_TYPES,   // ...then the on-call doctors
+    ITEM_COUNT
 };
 
 // Where an item's row is (its label starts here)
 static Vector2 item_pos(int item)
 {
     if (item < ITEM_EQUIP) return (Vector2){ LEFT_X, 222.0f + item * ROW_H + (item >= ITEM_BEDS ? 22 : 0) };
+    if (item == ITEM_ON_CALL) return (Vector2){ RIGHT_X, 282.0f };
     return (Vector2){ RIGHT_X, 122.0f + (item - ITEM_EQUIP) * ROW_H };
 }
 static Rectangle minus_button(int item) { Vector2 p = item_pos(item); return (Rectangle){ p.x + 200, p.y - 2, 26, 24 }; }
@@ -81,6 +83,7 @@ static int *item_value(Setup *s, int item, int *lo, int *hi)
     case ITEM_NIGHT_NURSES:  *lo = SETUP_NURSES_MIN;  *hi = NURSE_MAX;  return &s->nurses[SHIFT_NIGHT];
     case ITEM_NIGHT_DOCTORS: *lo = SETUP_DOCTORS_MIN; *hi = DOCTOR_MAX; return &s->doctors[SHIFT_NIGHT];
     case ITEM_BEDS:          *lo = SETUP_BEDS_MIN;    *hi = BED_COUNT - 1; return &s->beds;
+    case ITEM_ON_CALL:       *lo = 0;                 *hi = ON_CALL_MAX; return &s->onCall;
     default:                 *lo = 1; *hi = EQUIP_MAX_EACH; return &s->equipment[item - ITEM_EQUIP];
     }
 }
@@ -93,6 +96,7 @@ static const char *item_label(int item)
     case ITEM_NIGHT_NURSES:  return "Night nurses";
     case ITEM_NIGHT_DOCTORS: return "Night doctors";
     case ITEM_BEDS:          return "Beds (+ resus)";
+    case ITEM_ON_CALL:       return "On-call doctors";
     default:                 return sim_equipment_short(item - ITEM_EQUIP);
     }
 }
@@ -179,13 +183,15 @@ void draw_setup_screen(const Setup *setup, int day)
     DrawText("STAFF", LEFT_X, 198, 14, C_MUTED);
     DrawText("A&E", LEFT_X, item_pos(ITEM_BEDS).y - 22, 14, C_MUTED);
     DrawText("EQUIPMENT", RIGHT_X, 98, 14, C_MUTED);
+    DrawText("ON CALL (called in when the waiting room is full)", RIGHT_X, 262, 14, C_MUTED);
     Setup copy = *setup;                             // (item_value wants a changeable setup)
     for (int item = 0; item < ITEM_COUNT; item++) {
         int lo, hi;
         int v = *item_value(&copy, item, &lo, &hi);
         Vector2 p = item_pos(item);
-        if (item >= ITEM_EQUIP) DrawRectangle((int)p.x, (int)p.y + 4, 10, 10, draw_equipment_colour(item - ITEM_EQUIP));
-        DrawText(item_label(item), (int)p.x + (item >= ITEM_EQUIP ? 16 : 0), (int)p.y, 18, C_INK);
+        bool kit = (item >= ITEM_EQUIP && item < ITEM_ON_CALL);
+        if (kit) DrawRectangle((int)p.x, (int)p.y + 4, 10, 10, draw_equipment_colour(item - ITEM_EQUIP));
+        DrawText(item_label(item), (int)p.x + (kit ? 16 : 0), (int)p.y, 18, C_INK);
         small_button(minus_button(item), "-", v > lo);
         const char *num = TextFormat("%d", v);
         DrawText(num, (int)p.x + 248 - MeasureText(num, 20) / 2, (int)p.y, 20, C_INK);
@@ -206,7 +212,7 @@ void draw_setup_screen(const Setup *setup, int day)
              LEFT_X, 488, 12, C_MUTED);
 
     // The earlier shifts
-    int y = 280;
+    int y = 318;
     DrawText("EARLIER SHIFTS", RIGHT_X, y, 14, C_MUTED);                          y += 22;
     if (historyCount == 0) {
         DrawText("None yet: they'll appear here after each shift.", RIGHT_X, y, 14, C_MUTED);
