@@ -1,4 +1,3 @@
-[Readme.md](https://github.com/user-attachments/files/33869575/Readme.md)
 # Hospital Resource Simulator
 
 A simulation of a hospital emergency department, written in C99 with
