@@ -286,10 +286,10 @@ static void test_log_grows_and_matches(void)
         CHECK(r->wait >= 0.0f, "record %d has a negative wait", i);
         CHECK(strncmp(r->treatedBy, "Dr ", 3) == 0 || strncmp(r->treatedBy, "Nurse ", 6) == 0,
               "record %d: treated by \"%s\"", i, r->treatedBy);
-        // Anyone a nurse sent to a doctor must have been treated by one. (It doesn't
-        // work the other way: a free doctor also takes routine and urgent patients.)
-        if (r->sawDoctor) CHECK(strncmp(r->treatedBy, "Dr ", 3) == 0,
-                                "record %d: sent to a doctor but treated by \"%s\"", i, r->treatedBy);
+        // saw_doctor says yes exactly when a doctor treated them (sent by a nurse,
+        // or a free doctor who took a routine or urgent patient)
+        CHECK(r->sawDoctor == (strncmp(r->treatedBy, "Dr ", 3) == 0),
+              "record %d: saw_doctor doesn't match treated by \"%s\"", i, r->treatedBy);
         if (i > 0) CHECK(r->dischargeTime >= sim.treatedLog[i - 1].dischargeTime,
                          "record %d left before record %d", i, i - 1);
         if (checksFailed > 5) break;                 // don't print hundreds of lines

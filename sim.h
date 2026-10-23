@@ -177,7 +177,7 @@ typedef struct {
     char sentTo[PATHWAY_LEN + 16];   // rooms after A&E, e.g. "X-ray", or "Home"
     bool rescue;                     // came in by helicopter
     int rescueService;               // ...and which service brought them
-    bool sawDoctor;                  // true if a nurse sent them to a doctor
+    bool sawDoctor;                  // true if a doctor treated them (sent by a nurse, or a free doctor)
     float arrivalTime;               // clock time they arrived
     float wait;                      // seconds waiting for a bed
     float dischargeTime;             // clock time they left

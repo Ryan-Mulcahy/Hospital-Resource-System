@@ -1045,7 +1045,8 @@ static void log_treated(Sim *sim, const Patient *p, const char *treatedBy)
     r->severity = p->severity;
     r->condition = p->condition;
     snprintf(r->treatedBy, sizeof r->treatedBy, "%s", treatedBy);
-    r->sawDoctor = p->needsDoctor;
+    // Saw a doctor: a nurse sent them to one, or a free doctor took them
+    r->sawDoctor = strncmp(treatedBy, "Dr ", 3) == 0;
     r->rescue = p->rescue;
     r->rescueService = p->rescueService;
     sim_route_text(p, r->sentTo, (int)sizeof r->sentTo);
