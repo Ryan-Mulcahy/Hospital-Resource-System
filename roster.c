@@ -115,7 +115,7 @@ static void draw_team(const Setup *setup, int x, const char *heading, int day, S
     DrawCircleLines(x + 6, y + 9, 6, C_EMERGENCY);
     DrawText(onCall, x + 20, y, 20, C_INK);
     DrawText("on call", x + 28 + MeasureText(onCall, 20), y + 4, 14, C_EMERGENCY);      y += 22;
-    DrawText(TextFormat("comes in if %d are waiting for a doctor", ON_CALL_AT), x + 20, y, 12, C_MUTED);
+    DrawText(TextFormat("comes in if the waiting room is full (%d)", WAITING_ROOM_SEATS), x + 20, y, 12, C_MUTED);
 }
  
 void draw_roster_screen(const Setup *setup, int day, ShiftType shift)

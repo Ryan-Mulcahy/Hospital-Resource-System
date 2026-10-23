@@ -269,7 +269,7 @@ static void draw_nurses(const Sim *sim)
 
 static void draw_stats(const Sim *sim, float speed, bool paused)
 {
-    const int x = 680, y = 60, line = 23;
+    const int x = 680, y = 60, line = 21;
     int inBeds = 0;
     for (int i = 0; i < BED_COUNT; i++) {
         if (sim->beds[i].occupant != NULL) inBeds++;
@@ -298,7 +298,9 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     sim_time_of_day(sim, &hh, &mm);
     DrawText(TextFormat("%s:  %02d:%02d", sim->shift == SHIFT_DAY ? "Day shift" : "Night shift", hh, mm),
              x, y + 1 * line + 8, 16, t.ink);
-    DrawText(TextFormat("Waiting:    %d", sim->waitingCount),         x, y + 2 * line + 8, 16, t.ink);
+    DrawText(TextFormat("Waiting:    %d / %d%s", sim->waitingCount, WAITING_ROOM_SEATS,
+                        sim->waitingCount >= WAITING_ROOM_SEATS ? "  (full)" : ""),
+             x, y + 2 * line + 8, 16, sim->waitingCount >= WAITING_ROOM_SEATS ? t.alert : t.ink);
     DrawText(TextFormat("Beds used:  %d / %d", inBeds, BED_COUNT),    x, y + 3 * line + 8, 16, t.ink);
     DrawText(TextFormat("Treated:    %d", sim->stats.treated),              x, y + 4 * line + 8, 16, t.ink);
     DrawText(TextFormat("Avg wait:   %.1f s", avgWait),               x, y + 5 * line + 8, 16, t.ink);
@@ -306,11 +308,14 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
 
     DrawText(TextFormat("Doctors:    %d / %d%s", busyDoctors, sim_doctors_on(sim), sim->onCall ? "  (on call in)" : ""),
              x, y + 7 * line + 8, 16, sim->onCall ? t.alert : t.ink);
+    // The on-call doctor: called in when the waiting room is full
+    const char *onCallText = sim->onCall ? "On call:    in" : sim->onCallComing >= 0 ? "On call:    coming" : "On call:    if it's full";
+    DrawText(onCallText, x, y + 10 * line + 8, 16, (sim->onCall || sim->onCallComing >= 0) ? t.alert : t.ink);
     DrawText(TextFormat("In rooms:   %d", sim_patients_in_rooms(sim)), x, y + 8 * line + 8, 16, t.ink);
     DrawText(TextFormat("Speed:      %.1fx", speed),                  x, y + 9 * line + 8, 16, t.ink);
 
     // Equipment: a bar for each kind, filled for the ones in use
-    int ey = y + 10 * line + 22;
+    int ey = y + 11 * line + 18;
     DrawText("EQUIPMENT IN USE", x, ey, 14, t.muted);
     ey += 20;
     for (int e = 0; e < EQUIP_TYPES; e++) {

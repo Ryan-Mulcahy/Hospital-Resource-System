@@ -17,11 +17,16 @@
 #define NURSE_MAX    6
 #define DOCTOR_MAX   4
 
-// When too many patients are waiting for a doctor, an on-call doctor is
-// called in. They take the next place after the shift's doctors
-// (doctors[sim_shift_doctors(sim)]), and go home once nobody is waiting for a doctor.
+// When the waiting room is full, an on-call doctor is called in (see
+// WAITING_ROOM_SEATS below). They take the next place after the shift's doctors
+// (doctors[sim_shift_doctors(sim)]), and go home once it's quieter.
 #define DOCTOR_SLOTS   (DOCTOR_MAX + 1)     // room for the shift's doctors and one on call
-#define ON_CALL_AT     4         // patients waiting for a doctor before one is called in
+// The on-call doctor is called when the waiting room is full (every seat
+// taken) for ON_CALL_AFTER seconds without a break, and goes home once it's
+// down to half full and they've finished with their patient.
+#define WAITING_ROOM_SEATS 20    // seats in the waiting room (the 3D view has this many chairs)
+#define ON_CALL_AFTER  1.0f      // seconds (4 minutes) it has to stay full, so a moment's rush doesn't call them
+#define ON_CALL_HOME   (WAITING_ROOM_SEATS / 2)   // they go home once this few are waiting (or fewer)
 #define ON_CALL_DELAY  3.0f      // seconds (12 minutes) for them to get to the hospital
 
 // A patient waiting for a doctor isn't left alone: a free nurse stays with
@@ -288,6 +293,7 @@ typedef struct {
     Doctor doctors[DOCTOR_SLOTS];  // the shift's doctors, then a place for one on call
     bool onCall;             // an on-call doctor is in
     float onCallComing;      // seconds until the on-call doctor arrives (< 0: nobody called)
+    float onCallPressure;    // seconds the waiting room has been full, without a break
     Patient *inbound;        // helicopter rescues on their way, in landing order
     float lastLanding;       // clock time the last rescue landed (or will)
     float clock;             // simulated seconds since 07:00 at the start of the day
@@ -355,6 +361,9 @@ void sim_add_rescue(Sim *sim);
 // Won: the rest of their surgery takes half as long. Lost: a complication,
 // so it takes 60% longer. Does nothing if they're no longer in theatre.
 void sim_surgery_result(Sim *sim, int id, bool won);
+
+// Patients in A&E beds who need a doctor and haven't got one yet.
+int sim_waiting_for_doctor(const Sim *sim);
 
 // Doctors on duty now: the shift's doctors, plus the on-call doctor if they're in.
 // (Their places in sim->doctors: the shift's doctors first, then the on-call one.)

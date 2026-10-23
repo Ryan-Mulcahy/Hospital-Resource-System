@@ -586,6 +586,16 @@ int sim_inbound_count(const Sim *sim)
     return n;
 }
 
+int sim_waiting_for_doctor(const Sim *sim)
+{
+    int n = 0;
+    for (int i = 0; i < BED_COUNT; i++) {
+        const Patient *p = sim->beds[i].occupant;
+        if (p && p->needsDoctor && !p->doneInAE && sim_doctor_at(sim, i) == -1) n++;
+    }
+    return n;
+}
+
 int sim_doctors_on(const Sim *sim)
 {
     return sim_shift_doctors(sim) + (sim->onCall ? 1 : 0);
@@ -963,6 +973,7 @@ void sim_start_night(Sim *sim)
     for (int d = sim->setup.doctors[SHIFT_NIGHT]; d < DOCTOR_SLOTS; d++) sim->doctors[d].busyWithBed = -1;
     sim->onCall = false;             // the on-call doctor goes home too
     sim->onCallComing = -1.0f;
+    sim->onCallPressure = 0.0f;
 
     // The power is back on for the new shift (if it wasn't), and maybe it'll go again
     sim->power = POWER_ON;
@@ -1298,17 +1309,15 @@ void sim_update(Sim *sim, float dt)
         sim->nurses[d].busyWithBed = bed;
     }
  
-    // 5b. The on-call doctor: called in when ON_CALL_AT or more patients are
-    //     waiting for a doctor, arriving ON_CALL_DELAY later; they go home
-    //     when nobody is waiting for a doctor and they're free
-    int waitingForDoctor = 0;
-    for (int i = 0; i < BED_COUNT; i++) {
-        const Patient *p = sim->beds[i].occupant;
-        if (p && p->needsDoctor && !p->doneInAE && sim_doctor_at(sim, i) == -1) waitingForDoctor++;
-    }
+    // 5b. The on-call doctor: called in when the waiting room has been full
+    //     (WAITING_ROOM_SEATS or more waiting) for ON_CALL_AFTER seconds in a
+    //     row, arriving ON_CALL_DELAY later. They stay until the waiting room
+    //     is down to half full (ON_CALL_HOME) and they're free.
     int onCallSlot = sim_shift_doctors(sim);
     if (!sim->onCall) {
-        if (waitingForDoctor >= ON_CALL_AT && sim->onCallComing < 0.0f) sim->onCallComing = ON_CALL_DELAY;
+        if (sim->waitingCount >= WAITING_ROOM_SEATS) sim->onCallPressure += dt;
+        else                                         sim->onCallPressure = 0.0f;
+        if (sim->onCallPressure >= ON_CALL_AFTER && sim->onCallComing < 0.0f) sim->onCallComing = ON_CALL_DELAY;
         if (sim->onCallComing >= 0.0f) {
             sim->onCallComing -= dt;
             if (sim->onCallComing <= 0.0f) {
@@ -1322,7 +1331,7 @@ void sim_update(Sim *sim, float dt)
         }
     } else {
         sim->stats.onCallTime += dt;
-        if (waitingForDoctor == 0 && sim->doctors[onCallSlot].busyWithBed == -1) sim->onCall = false;
+        if (sim->waitingCount <= ON_CALL_HOME && sim->doctors[onCallSlot].busyWithBed == -1) sim->onCall = false;
     }
 
         // 6. Doctor rounds: every free doctor goes to the most urgent patient

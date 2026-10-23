@@ -60,7 +60,7 @@
 #define RESUS_Z      -0.15f
 #define DESK_Z       -0.2f   // nurses' station
 #define CHAIRS_PER_ROW 10
-#define CHAIR_ROWS     2
+#define CHAIR_ROWS     2       // (CHAIR_ROWS x CHAIRS_PER_ROW = WAITING_ROOM_SEATS in sim.h)
 #define CHAIR_SPACING  1.2f
 #define WALL_BACK_H    3.0f  // height of the back wall
 #define WALL_SIDE_H    2.4f  // height of the left wall
@@ -2874,13 +2874,18 @@ static void hud(const Sim *sim, float speed, bool paused)
     DrawRectangleRounded(card, 0.12f, 8, night ? (Color){ 30, 38, 56, 230 } : (Color){ 255, 255, 255, 230 });
     int x = (int)card.x + 14, y = (int)card.y + 12;
     DrawText(TextFormat("%s  %02d:%02d", sim->shift == SHIFT_NIGHT ? "Night shift" : "Day shift", hh, mm),
-             x, y, 18, text);                                                          y += 28;
-    DrawText(TextFormat("Waiting      %d", sim->waitingCount), x, y, 16, soft);       y += 22;
+             x, y, 18, text);
+    const char *sp = TextFormat("%gx", speed);                                       // the speed, on the right
+    DrawText(sp, (int)(card.x + card.width) - 14 - MeasureText(sp, 16), y + 2, 16, soft);  y += 28;
+    DrawText(TextFormat("Waiting      %d / %d", sim->waitingCount, WAITING_ROOM_SEATS), x, y, 16,
+             sim->waitingCount >= WAITING_ROOM_SEATS ? C_URGENT : soft);                   y += 22;
     DrawText(TextFormat("Treated      %d", sim->stats.treated), x, y, 16, soft);      y += 22;
     DrawText(TextFormat("Nurses busy  %d / %d", busyN, sim_nurses_on(sim)), x, y, 16, soft);   y += 22;
-    DrawText(TextFormat("Doctors busy %d / %d%s", busyD, sim_doctors_on(sim), sim->onCall ? " +on call" : ""), x, y, 16,
-             sim->onCall ? C_EMERGENCY : soft);                                                               y += 22;
-    DrawText(TextFormat("Speed        %.1fx", speed), x, y, 16, soft);
+    DrawText(TextFormat("Doctors busy %d / %d", busyD, sim_doctors_on(sim)), x, y, 16, sim->onCall ? C_EMERGENCY : soft);   y += 22;
+    // The on-call doctor (called in when the waiting room is full)
+    if (sim->onCall)                  DrawText("On-call doctor in", x, y, 16, C_EMERGENCY);
+    else if (sim->onCallComing >= 0)  DrawText("On-call doctor coming", x, y, 16, C_URGENT);
+    else                              DrawText("On call: if it's full", x, y, 16, soft);
 
     // Equipment card: a row of blocks for each kind, filled for the ones in use
     Rectangle kitCard = { hudW - 230, 180, 216, 128 };
@@ -3201,7 +3206,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
               cam, 12, WHITE, onCall ? C_EMERGENCY : C_INK);
     }
     int seats = CHAIR_ROWS * CHAIRS_PER_ROW;
-    if (sim->waitingCount > seats && ground) {
+    if (sim->waitingCount > seats && ground) {        // (seats is WAITING_ROOM_SEATS: when it's full the on-call doctor is called)
         label(TextFormat("+%d more waiting", sim->waitingCount - seats), v3(0, 0.1f, 6.4f),
               cam, 16, WHITE, C_EMERGENCY);
     }
