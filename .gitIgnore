@@ -5,3 +5,8 @@ test
 hospital.exe
 .vscode/
 log_*.csv
+run_tests
+run_tests.exe
+
+run_tests
+run_tests.exe
