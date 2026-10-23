@@ -95,6 +95,9 @@ void draw_shift_report(const Sim *sim)
     centered(TextFormat("Day %d   %02d:00 to %02d:00     %s,  %d nurses, %d doctors, %d beds", sim->day, from % 24,
                         (from + SHIFT_HOURS) % 24, sim_scenario_name(sim->setup.scenario), sim_nurses_on(sim),
                         sim_shift_doctors(sim), sim->setup.beds), 92, 16, C_MUTED);
+    if (s->carriedOver > 0)                          // patients already in at the start (not counted as arrivals)
+        centered(TextFormat(night ? "%d patients handed over by the day shift" : "Started with %d patients from the day before",
+                            s->carriedOver), 112, 14, C_EMERGENCY);
  
     // Left column: patients
     int inBeds = 0;
@@ -442,7 +445,8 @@ static float nice_max(float v)
 }
 
 // One graph: the values (count of them) across the shift, in a box from y0 to y1
-static void line_graph(const Sim *sim, const char *title, const float *values, int count, float y0, float y1, Color colour, const char *unit)
+static void line_graph(const Sim *sim, const char *title, const char *explain, const float *values, int count,
+                       float y0, float y1, Color colour, const char *unit)
 {
     const ShiftStats *s = &sim->stats;
     float top = 0;
@@ -450,6 +454,7 @@ static void line_graph(const Sim *sim, const char *title, const float *values, i
     top = nice_max(top < 1 ? 1 : top);
 
     DrawText(title, GRAPH_X0, (int)y0 - 22, 16, C_INK);
+    DrawText(explain, GRAPH_X0 + MeasureText(title, 16) + 14, (int)y0 - 19, 12, C_MUTED);   // what it means, in plain words
     DrawRectangle(GRAPH_X0, (int)y0, GRAPH_X1 - GRAPH_X0, (int)(y1 - y0), (Color){ 248, 250, 252, 255 });
     // The power off: shaded
     float offAt = -1;
@@ -498,10 +503,12 @@ void draw_graphs_page(const Sim *sim)
     if (s->samples < 2) {
         centered("Not enough of the shift to draw yet.", 260, 18, C_MUTED);
     } else {
-        float waiting[SAMPLES], avgWait[SAMPLES];
-        for (int i = 0; i < s->samples; i++) { waiting[i] = (float)s->sampleWaiting[i]; avgWait[i] = sim_minutes(s->sampleAvgWait[i]); }
-        line_graph(sim, "Patients in the waiting room", waiting, s->samples, 104, 244, C_BRAND, "patients");
-        line_graph(sim, "Average wait for a bed so far", avgWait, s->samples, 298, 418, C_URGENT, "minutes");
+        float waiting[SAMPLES], longest[SAMPLES];
+        for (int i = 0; i < s->samples; i++) { waiting[i] = (float)s->sampleWaiting[i]; longest[i] = sim_minutes(s->sampleLongestWait[i]); }
+        line_graph(sim, "Patients in the waiting room", "how many were waiting for a bed, every 10 minutes",
+                   waiting, s->samples, 104, 244, C_BRAND, "patients");
+        line_graph(sim, "Longest wait right then", "how long the person who'd waited longest had been there (0: nobody waiting)",
+                   longest, s->samples, 298, 418, C_URGENT, "minutes");
         // The times along the bottom, every 2 hours
         int from = night ? DAY_START_HOUR + SHIFT_HOURS : DAY_START_HOUR;
         for (int h = 0; h <= SHIFT_HOURS; h += 2) {
@@ -516,6 +523,10 @@ void draw_graphs_page(const Sim *sim)
     int x = GRAPH_X0;
     bool seen[EVENT_TYPES] = { false };
     for (int e = 0; e < s->eventCount; e++) seen[s->events[e].type] = true;
+    if (s->eventCount > 0) {
+        DrawText("Dashed lines show when:", x, 444, 14, C_MUTED);
+        x += MeasureText("Dashed lines show when:", 14) + 14;
+    }
     for (int k = 0; k < EVENT_TYPES; k++) {
         if (!seen[k]) continue;
         DrawRectangle(x, 450, 14, 4, EVENT_COLOUR[k]);

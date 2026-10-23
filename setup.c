@@ -19,6 +19,7 @@ typedef struct {
     ShiftType shift;
     Setup setup;
     int arrived, treated;
+    int carriedOver;             // patients already in when the shift started
     float avgWait, longestWait;  // simulated seconds
     int powerCuts;
 } ShiftResult;
@@ -34,7 +35,7 @@ void setup_record_shift(const Sim *sim)
     }
     const ShiftStats *s = &sim->stats;
     history[historyCount++] = (ShiftResult){
-        sim->day, sim->shift, sim->setup, s->arrived, s->treated,
+        sim->day, sim->shift, sim->setup, s->arrived, s->treated, s->carriedOver,
         s->admitted > 0 ? s->totalWait / s->admitted : 0.0f, s->longestWait, s->powerCuts
     };
 }
@@ -66,7 +67,8 @@ static Vector2 item_pos(int item)
 static Rectangle minus_button(int item) { Vector2 p = item_pos(item); return (Rectangle){ p.x + 200, p.y - 2, 26, 24 }; }
 static Rectangle plus_button(int item)  { Vector2 p = item_pos(item); return (Rectangle){ p.x + 270, p.y - 2, 26, 24 }; }
 static Rectangle scenario_button(int k) { return (Rectangle){ LEFT_X + k * 136.0f, 118, 128, 34 }; }
-static Rectangle power_button(void)     { return (Rectangle){ LEFT_X + 200, 404, 96, 26 }; }
+static Rectangle power_button(void)     { return (Rectangle){ LEFT_X + 200, 396, 96, 26 }; }
+static Rectangle carry_button(void)     { return (Rectangle){ LEFT_X + 200, 460, 96, 26 }; }
 static Rectangle usual_button(void)     { return (Rectangle){ SCREEN_W / 2 - 250, 506, 220, 46 }; }
 static Rectangle start_button(void)     { return (Rectangle){ SCREEN_W / 2 + 30, 506, 220, 46 }; }
 
@@ -116,7 +118,12 @@ bool setup_screen_update(Setup *setup)
     for (int k = 0; k < SCENARIO_COUNT; k++)
         if (CheckCollisionPointRec(m, scenario_button(k))) setup->scenario = (Scenario)k;
     if (CheckCollisionPointRec(m, power_button())) setup->powerCuts = !setup->powerCuts;
-    if (CheckCollisionPointRec(m, usual_button())) sim_default_setup(setup);
+    if (CheckCollisionPointRec(m, carry_button())) setup->carryOver = !setup->carryOver;
+    if (CheckCollisionPointRec(m, usual_button())) {
+        bool carry = setup->carryOver;               // (the usual numbers, but leave this switch as it is)
+        sim_default_setup(setup);
+        setup->carryOver = carry;
+    }
     return CheckCollisionPointRec(m, start_button());
 }
 
@@ -127,6 +134,14 @@ static void small_button(Rectangle r, const char *text, bool enabled)
     bool over = enabled && CheckCollisionPointRec(GetMousePosition(), r);
     DrawRectangleRounded(r, 0.3f, 6, !enabled ? C_EDGE : over ? C_INK : C_BRAND);
     DrawText(text, (int)(r.x + r.width / 2) - MeasureText(text, 18) / 2, (int)r.y + 3, 18, WHITE);
+}
+
+// An ON / OFF switch
+static void switch_button(Rectangle r, bool on)
+{
+    DrawRectangleRounded(r, 0.5f, 8, on ? C_ROUTINE : C_LIGHT);
+    const char *t = on ? "ON" : "OFF";
+    DrawText(t, (int)(r.x + r.width / 2) - MeasureText(t, 16) / 2, (int)r.y + 5, 16, WHITE);
 }
 
 static void big_button(Rectangle r, const char *text, Color colour)
@@ -178,13 +193,17 @@ void draw_setup_screen(const Setup *setup, int day)
     }
 
     // Power cuts on or off
-    DrawText("POWER CUTS", LEFT_X, 386, 14, C_MUTED);
-    DrawText("By themselves", LEFT_X, 406, 18, C_INK);
-    Rectangle pb = power_button();
-    DrawRectangleRounded(pb, 0.5f, 8, setup->powerCuts ? C_ROUTINE : C_LIGHT);
-    const char *pt = setup->powerCuts ? "ON" : "OFF";
-    DrawText(pt, (int)(pb.x + pb.width / 2) - MeasureText(pt, 16) / 2, (int)pb.y + 5, 16, WHITE);
-    DrawText("(C cuts the power at any time)", LEFT_X, 438, 14, C_MUTED);
+    DrawText("POWER CUTS", LEFT_X, 378, 14, C_MUTED);
+    DrawText("By themselves", LEFT_X, 398, 18, C_INK);
+    switch_button(power_button(), setup->powerCuts);
+    DrawText("(C cuts the power at any time)", LEFT_X, 424, 12, C_MUTED);
+
+    // Yesterday's patients: kept, or an empty hospital
+    DrawText("THE NEXT DAY", LEFT_X, 442, 14, C_MUTED);
+    DrawText("Keep patients", LEFT_X, 462, 18, C_INK);
+    switch_button(carry_button(), setup->carryOver);
+    DrawText(day == 1 ? "(from day 2: nobody's in yet)" : setup->carryOver ? "(yesterday's patients stay in)" : "(the hospital starts empty)",
+             LEFT_X, 488, 12, C_MUTED);
 
     // The earlier shifts
     int y = 280;
@@ -193,7 +212,7 @@ void draw_setup_screen(const Setup *setup, int day)
         DrawText("None yet: they'll appear here after each shift.", RIGHT_X, y, 14, C_MUTED);
     } else {
         // Shift, kind of day, staff and beds (4N 2D 8B), treated, average wait, power cuts
-        const int cx[] = { RIGHT_X, RIGHT_X + 88, RIGHT_X + 158, RIGHT_X + 252, RIGHT_X + 318, RIGHT_X + 392 };
+        const int cx[] = { RIGHT_X, RIGHT_X + 82, RIGHT_X + 172, RIGHT_X + 262, RIGHT_X + 326, RIGHT_X + 396 };
         DrawText("Shift", cx[0], y, 12, C_MUTED);   DrawText("Kind", cx[1], y, 12, C_MUTED);
         DrawText("Staff, beds", cx[2], y, 12, C_MUTED); DrawText("Treated", cx[3], y, 12, C_MUTED);
         DrawText("Avg wait", cx[4], y, 12, C_MUTED); DrawText("Cuts", cx[5], y, 12, C_MUTED); y += 17;
@@ -201,13 +220,20 @@ void draw_setup_screen(const Setup *setup, int day)
             const ShiftResult *r = &history[i];
             int sh = r->shift;
             DrawText(TextFormat("Day %d %s", r->day, sh == SHIFT_DAY ? "day" : "night"), cx[0], y, 14, C_INK);
-            DrawText(r->setup.scenario == SCENARIO_NORMAL ? "Normal" : r->setup.scenario == SCENARIO_FLU ? "Flu" : "Incident",
-                     cx[1], y, 14, C_INK);
+            const char *kind = r->setup.scenario == SCENARIO_NORMAL ? "Normal" : r->setup.scenario == SCENARIO_FLU ? "Flu" : "Incident";
+            DrawText(kind, cx[1], y, 14, C_INK);
+            // A day shift that started with patients already in (from
+            // yesterday): not a clean comparison, so it's marked
+            if (sh == SHIFT_DAY && r->carriedOver > 0)
+                DrawText(TextFormat("+%d", r->carriedOver), cx[1] + MeasureText(kind, 14) + 4, y + 2, 12, C_EMERGENCY);
             DrawText(TextFormat("%dN %dD %dB", r->setup.nurses[sh], r->setup.doctors[sh], r->setup.beds), cx[2], y, 14, C_INK);
             DrawText(TextFormat("%d", r->treated), cx[3], y, 14, C_INK);
             DrawText(TextFormat("%.0f min", sim_minutes(r->avgWait)), cx[4], y, 14, C_INK);
             DrawText(TextFormat("%d", r->powerCuts), cx[5], y, 14, r->powerCuts ? C_EMERGENCY : C_INK);
         }
+        bool anyCarried = false;
+        for (int i = 0; i < historyCount; i++) if (history[i].shift == SHIFT_DAY && history[i].carriedOver > 0) anyCarried = true;
+        if (anyCarried) DrawText("+n: the day started with n patients already in", RIGHT_X, y + 2, 12, C_EMERGENCY);
     }
 
     big_button(usual_button(), "Usual setup", C_MUTED);

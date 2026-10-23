@@ -40,7 +40,8 @@
 // Before each day: the setup screen (click the - and + buttons, the kind
 //           of day and the power cut switch; N or Start to begin)
 // Controls: SPACE pause | UP/DOWN speed | E spawn emergency
-//           R restart the day (back to the setup screen) | C cut the power
+//           R restart the day (back to the setup screen; it starts empty)
+//           C cut the power
 //           H helicopter rescue | G mini games | M sound on/off
 //           Straight into a game: O operation, S shock, X hold still (X-ray
 //           and CT), P pharmacy rush
@@ -158,8 +159,15 @@ int main(void)
         if (showSetup) {
             // Setup screen: change the numbers, then start the day
             if (setup_screen_update(&setup)) {
-                sim_free(&sim);
-                sim_init(&sim, setupDay, &setup);
+                // The next day, with yesterday's patients still in (if that's
+                // switched on); otherwise, and after R, an empty hospital
+                bool nextDay = (setupDay == sim.day + 1 && sim.shiftOver && sim.shift == SHIFT_NIGHT);
+                if (setup.carryOver && nextDay) {
+                    sim_next_day(&sim, &setup);
+                } else {
+                    sim_free(&sim);
+                    sim_init(&sim, setupDay, &setup);
+                }
                 showSetup = false;
                 showRoster = true;           // then who's on
                 recorded = false;

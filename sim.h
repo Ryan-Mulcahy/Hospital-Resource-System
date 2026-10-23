@@ -123,6 +123,7 @@ typedef struct {
     int beds;                // A&E beds open, not counting the resus bay (up to BED_COUNT - 1)
     int equipment[EQUIP_TYPES]; // how many of each piece of equipment
     bool powerCuts;          // can the power go off by itself (C still cuts it either way)
+    bool carryOver;          // start the day with yesterday's patients still in (from day 2 on)
 } Setup;
 
 // The usual setup: 4 nurses and 2 doctors by day, 2 and 1 at night, all 8
@@ -264,10 +265,14 @@ typedef struct {
     // A major incident
     int incidentCasualties;  // casualties brought in
 
+    // Patients already in the hospital when the shift started: handed over
+    // from the day shift (at night), or from yesterday (if carryOver is on)
+    int carriedOver;
+
     // The graphs: the waiting room every SAMPLE_EVERY seconds, and what happened when
     int samples;                     // how many taken so far
     int sampleWaiting[SAMPLES];      // patients in the waiting room
-    float sampleAvgWait[SAMPLES];    // average wait for a bed so far (seconds)
+    float sampleLongestWait[SAMPLES];// how long the person who'd waited longest had been waiting (seconds; 0 if nobody)
     int sampleInBeds[SAMPLES];       // A&E beds in use
     ShiftEvent events[MAX_EVENTS];
     int eventCount;
@@ -335,6 +340,18 @@ typedef struct {
 // `setup` says (NULL for the usual setup).
 // Only call on a new Sim or after sim_free, or the treatment log leaks.
 void sim_init(Sim *sim, int day, const Setup *setup);
+
+// The next day, keeping everyone still in the hospital (the carryOver
+// switch): the clock goes back to 07:00, the new setup and the new day's
+// staff take over, and the counts start again. Patients in a bed that's
+// closed in the new setup go back to the waiting room. Equipment patients
+// have stays with them, even if there's less of it now (it isn't handed out
+// again until enough has come back).
+void sim_next_day(Sim *sim, const Setup *setup);
+
+// Patients in the hospital now: waiting, in A&E, in the rooms after it,
+// being taken out, or in a helicopter on its way.
+int sim_patients_in_hospital(const Sim *sim);
 
 // Nurses on this shift, and the shift's own doctors (not the on-call one).
 int sim_nurses_on(const Sim *sim);

@@ -796,6 +796,81 @@ void sim_init(Sim *sim, int day, const Setup *setup)
     roster_assign(sim);      // day shift staff
 }
  
+int sim_patients_in_hospital(const Sim *sim)
+{
+    int n = sim->waitingCount + sim_patients_in_rooms(sim) + sim_inbound_count(sim);
+    for (int b = 0; b < BED_COUNT; b++) if (sim->beds[b].occupant) n++;
+    for (const Patient *p = sim->leaving; p != NULL; p = p->next) n++;
+    return n;
+}
+
+// Move a patient's clock times back by `by` seconds (the clock is starting again)
+static void shift_times(Patient *p, float by)
+{
+    p->arrivalTime -= by;
+    if (p->equipWaitStart >= 0.0f) p->equipWaitStart -= by;
+}
+
+void sim_next_day(Sim *sim, const Setup *setup)
+{
+    float back = sim->clock;                 // the clock goes back to 07:00
+    sim->day++;
+    sim->setup = *setup;
+    sim_clamp_setup(&sim->setup);
+    sim->clock = 0.0f;
+    sim->shift = SHIFT_DAY;
+    sim->shiftOver = false;
+    sim->stats = (ShiftStats){ 0 };
+    sim->dayStats = (ShiftStats){ 0 };
+    sim->treatedLogCount = 0;                // a new log (the memory is reused)
+
+    // Everyone's times move back with the clock
+    for (Patient *p = sim->waiting; p != NULL; p = p->next) shift_times(p, back);
+    for (Patient *p = sim->leaving; p != NULL; p = p->next) shift_times(p, back);
+    for (Patient *p = sim->inbound; p != NULL; p = p->next) shift_times(p, back);
+    for (int b = 0; b < BED_COUNT; b++) if (sim->beds[b].occupant) shift_times(sim->beds[b].occupant, back);
+    for (int r = 0; r < ROOM_TYPES; r++) {
+        for (int s = 0; s < sim->rooms[r].capacity; s++) if (sim->rooms[r].in[s]) shift_times(sim->rooms[r].in[s], back);
+        for (Patient *p = sim->rooms[r].queue; p != NULL; p = p->next) shift_times(p, back);
+    }
+    sim->lastLanding -= back;
+
+    // Beds closed today: their patients go back to the waiting room
+    for (int b = 0; b < BED_COUNT; b++) {
+        Patient *p = sim->beds[b].occupant;
+        if (p == NULL || sim_bed_open(sim, b)) continue;
+        sim->beds[b].occupant = NULL;
+        p->walkLeft = 0.0f;
+        queue_insert(&sim->waiting, p);
+        sim->waitingCount++;
+    }
+
+    // Today's equipment (anything patients have stays with them for now)
+    for (int e = 0; e < EQUIP_TYPES; e++) sim->equipment[e].total = sim->setup.equipment[e];
+
+    // The new day's staff take over; the on-call doctor goes home
+    for (int d = 0; d < NURSE_MAX; d++)    sim->nurses[d].busyWithBed = -1;
+    for (int d = 0; d < DOCTOR_SLOTS; d++) sim->doctors[d].busyWithBed = -1;
+    sim->onCall = false;
+    sim->onCallComing = -1.0f;
+    sim->onCallPressure = 0.0f;
+    roster_assign(sim);
+
+    // Today's arrivals, helicopters, power and (maybe) bus crash
+    sim->nextArrival = random_arrival_gap(sim);
+    schedule_rescue(sim, 0.10f, 0.60f);
+    sim->power = POWER_ON;
+    sim->generatorStuck = false;
+    sim->powerBackAt = -1.0f;
+    schedule_power_cut(sim);
+    sim->incidentAt = (sim->setup.scenario == SCENARIO_MAJOR_INCIDENT)
+                    ? SHIFT_LENGTH * (float)GetRandomValue(25, 55) / 100.0f : -1.0f;
+    sim->incidentLeft = 0;
+    sim->incidentSince = -1.0f;
+
+    sim->stats.carriedOver = sim_patients_in_hospital(sim);
+}
+
 int sim_nurse_at(const Sim *sim, int bed)
 {
     for (int d = 0; d < NURSE_MAX; d++) {
@@ -962,6 +1037,7 @@ void sim_start_night(Sim *sim)
 {
     sim->dayStats = sim->stats;
     sim->stats = (ShiftStats){ 0 };
+    sim->stats.carriedOver = sim_patients_in_hospital(sim);   // handed over by the day shift
     sim->treatedLogCount = 0;        // start a new log; keep the memory to reuse
     sim->shift = SHIFT_NIGHT;
     sim->shiftOver = false;
@@ -1380,7 +1456,10 @@ void sim_update(Sim *sim, float dt)
         int k = sim->stats.samples++, inBeds = 0;
         for (int i = 0; i < BED_COUNT; i++) if (sim->beds[i].occupant) inBeds++;
         sim->stats.sampleWaiting[k] = sim->waitingCount;
-        sim->stats.sampleAvgWait[k] = sim->stats.admitted > 0 ? sim->stats.totalWait / sim->stats.admitted : 0.0f;
+        float longest = 0.0f;                                  // the longest anyone in the waiting room has been there
+        for (const Patient *p = sim->waiting; p != NULL; p = p->next)
+            if (sim->clock - p->arrivalTime > longest) longest = sim->clock - p->arrivalTime;
+        sim->stats.sampleLongestWait[k] = longest;
         sim->stats.sampleInBeds[k] = inBeds;
     }
 
