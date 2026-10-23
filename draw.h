@@ -31,4 +31,20 @@ void draw_frame(const Sim *sim, float speed, bool paused);
 // Returns true on the frame a new rescue is first seen.
 bool draw_rescue_banner(const Sim *sim, int centreX, int y);
 
+// In a power cut: darken everything (w x h) with red emergency lighting,
+// flickering as the lights come back on. `lamps`: draw the emergency lamps
+// in the top corners too.
+void draw_power_overlay(const Sim *sim, float w, float h, bool lamps);
+
+// The power cut's message ("POWER CUT - emergency lighting", and whether the
+// generator's starting), and "POWER BACK" for a moment after. Centred on centreX.
+void draw_power_status(const Sim *sim, int centreX, int y);
+
+// "MAJOR INCIDENT: bus crash..." while the casualties arrive. Centred on centreX.
+void draw_incident_banner(const Sim *sim, int centreX, int y);
+
+// The colour for each piece of equipment (EquipType), the same in 2D and 3D.
+Color draw_equipment_colour(int e);
+
 #endif
+

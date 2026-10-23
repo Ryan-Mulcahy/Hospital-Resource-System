@@ -6,6 +6,9 @@
 #define PATIENT_H
 #include <stdbool.h>
 #include "conditions.h"
+
+#define ROUTE_MAX 3          // the most rooms a patient visits after A&E
+
 typedef struct Patient {
     int id;
     int severity;            // 1 = emergency, 2 = urgent, 3 = routine
@@ -18,9 +21,17 @@ typedef struct Patient {
     const Condition *condition; // presenting condition, chosen to match severity
     bool rescue;             // brought in by helicopter
     int rescueService;       // which service flew them in (a RescueService)
-    int route[2];            // rooms to visit after A&E, in order (-1 = none)
+    int route[ROUTE_MAX];    // rooms to visit after A&E, in order (-1 = none)
     int routeStep;           // which of them they're on
-    float roomLeft;          // seconds left in the room they're in now
+    float roomLeft;          // seconds left in the room they're in now (a rescue on its
+                             // way in: seconds until the helicopter lands)
+    float walkLeft;          // seconds until they reach their bed or room; nothing
+                             // starts (assessment, treatment, a scan) until they're there
+    unsigned equipNeeds;     // equipment they need (bits: 1 << EquipType, see sim.h)
+    unsigned equipHeld;      // equipment they have with them now
+    unsigned equipMissing;   // equipment they're waiting for (0: not waiting)
+    float equipWaitStart;    // clock time they started waiting for it (< 0: not waiting)
+    bool doneInAE;           // treatment in A&E finished; waiting for a wheelchair to leave
     struct Patient *next;    // next patient in the waiting queue (or a room's queue)
 } Patient;
 
