@@ -5,9 +5,13 @@
 // Files:
 //   patient.c/.h  patient record and waiting queue
 //   sim.c/.h      simulation state: arrivals, treatment, admission, nurses,
-//                 the rooms after A&E, helicopter rescues and the shift clock
+//                 the rooms after A&E, helicopter rescues, power cuts, the
+//                 kinds of day (flu season, a major incident) and the shift clock
+//   setup.c/.h    the setup screen before each day (staff, beds, equipment,
+//                 the kind of day) and the table of earlier shifts
 //   draw.c/.h     everything drawn on screen during a shift
-//   report.c/.h   the end-of-shift report screen
+//   report.c/.h   the end-of-shift report screen, and its pages (patients
+//                 treated, equipment and rooms, graphs)
 //   view3d.c/.h   the 3D view of A&E (V switches between 2D and 3D)
 //   rooms3d.c/.h  the rest of the ground floor in 3D: ward, X-ray, MRI, bloods
 //                 and weight, operating theatre, nursery and admin office
@@ -25,6 +29,7 @@
 //   pharmgame.c/.h "Pharmacy rush", making up a prescription
 //   drivegame.c/.h "Blue lights", driving the ambulance in
 //   heligame.c/.h "Touchdown", landing the rescue helicopter
+//   gengame.c/.h  "Start the generator", when it won't start in a power cut
 //   gameui.c/.h   drawing the games share (the top bar, the result box)
 //   main.c        window, main loop and keyboard input
 //
@@ -32,16 +37,19 @@
 // (19:00 to 07:00). A report is shown at the end of each shift. Patients still
 // in the department at 19:00 are handed over to the night shift.
 //
-// Controls: SPACE pause | UP/DOWN speed | E spawn emergency | R restart the day
+// Before each day: the setup screen (click the - and + buttons, the kind
+//           of day and the power cut switch; N or Start to begin)
+// Controls: SPACE pause | UP/DOWN speed | E spawn emergency
+//           R restart the day (back to the setup screen) | C cut the power
 //           H helicopter rescue | G mini games | M sound on/off
 //           Straight into a game: O operation, S shock, X hold still (X-ray
 //           and CT), P pharmacy rush
 //           F11 full screen on/off (the window has a title bar to minimise it;
 //           in full screen, F11 first)
 //           N continue to the next shift, L view patients treated,
-//           E equipment and rooms (report screen)
-//           wheel or UP/DOWN scroll (patients-treated page); on those two
-//           pages, L or E again (or B) goes back to the report
+//           E equipment and rooms, G graphs (report screen)
+//           wheel or UP/DOWN scroll (patients-treated page); on those
+//           pages, L, E or G again (or B) goes back to the report
 //           3D view: drag to turn, right-drag to move, scroll to zoom,
 //           0 whole floor, 1-7 rooms, 8 A&E, 9 helipad and ambulance bay,
 //           T cinematic tour, click a patient to follow them,
@@ -56,6 +64,8 @@
 //           Pharmacy rush: click the tubs. Blue lights: LEFT/RIGHT steer,
 //           DOWN brake. Touchdown: LEFT/RIGHT, hold UP to hover, DOWN to
 //           drop. In every game: Q give up, R try again (practice)
+//           Generator (opens by itself if it won't start in a power cut):
+//           tap SPACE to pump the pressure into the green, ENTER to start
  
 #include <math.h>
 #include "raylib.h"
@@ -67,6 +77,7 @@
 #include "conditions.h"
 #include "sound.h"
 #include "minigames.h"
+#include "setup.h"
  
 // The 2D screens are laid out for SCREEN_W x SCREEN_H. In a bigger window
 // they're scaled up to fit, centred, with the mouse scaled to match so the
@@ -107,15 +118,23 @@ int main(void)
  
     conditions_load("conditions.csv");   // before any patient arrives
  
+    // The setup screen comes first (and before every day); the day starts
+    // with whatever is chosen there.
+    Setup setup;
+    sim_default_setup(&setup);
     Sim sim;
-    sim_init(&sim, 1);   // day 1
+    sim_init(&sim, 1, &setup);   // day 1 (set up again when the setup screen is done)
+    bool showSetup = true;   // the setup screen, before each day
+    int setupDay = 1;        // ...for this day
+    bool recorded = false;   // this shift's results are in the setup screen's table
  
     bool paused = false;
-    bool showRoster = true;  // roster screen before the shift starts
+    bool showRoster = false; // roster screen before the shift starts
     bool view3d = false;     // V switches between the 2D and 3D views
     float speed = 1.0f;
     bool viewingLog = false;   // on the report screen: showing the patients-treated page
     bool viewingKit = false;   // on the report screen: showing the equipment and rooms page
+    bool viewingGraphs = false;// on the report screen: showing the graphs page
     int logScroll = 0;         // first row shown on that page
  
     while (!WindowShouldClose()) {
@@ -124,8 +143,9 @@ int main(void)
 
         // The 2D screens are scaled to fit the window; the mouse has to be too.
         // (The mini games are 2D screens, even from the 3D view.)
-        bool operating = !showRoster && !sim.shiftOver && minigames_active();
-        bool in3d = !showRoster && !sim.shiftOver && view3d && !operating;
+        bool playing = !showSetup && !showRoster && !sim.shiftOver;   // a shift is on screen
+        bool operating = playing && minigames_active();
+        bool in3d = playing && view3d && !operating;
         Camera2D fit = fit_screen();
         if (in3d) {
             SetMouseOffset(0, 0);
@@ -135,9 +155,24 @@ int main(void)
             SetMouseScale(1.0f / fit.zoom, 1.0f / fit.zoom);
         }
 
-        if (showRoster) {
+        if (showSetup) {
+            // Setup screen: change the numbers, then start the day
+            if (setup_screen_update(&setup)) {
+                sim_free(&sim);
+                sim_init(&sim, setupDay, &setup);
+                showSetup = false;
+                showRoster = true;           // then who's on
+                recorded = false;
+                paused = false;
+            }
+        } else if (showRoster) {
             // Roster screen: wait for the shift to be started
             if (IsKeyPressed(KEY_N) || roster_start_clicked()) showRoster = false;
+        } else if (sim.shiftOver && viewingGraphs) {
+            // Graphs page: G (the key that opened it), B or BACKSPACE, or the button
+            if (IsKeyPressed(KEY_G) || IsKeyPressed(KEY_B) || IsKeyPressed(KEY_BACKSPACE) || report_graphs_back_clicked()) {
+                viewingGraphs = false;
+            }
         } else if (sim.shiftOver && viewingLog) {
             // Treatment log page: scroll, or go back to the report
             int wheel = (int)GetMouseWheelMove();
@@ -168,16 +203,18 @@ int main(void)
                 logScroll = 0;
             } else if (IsKeyPressed(KEY_E) || report_view_equipment_clicked()) {
                 viewingKit = true;
+            } else if (IsKeyPressed(KEY_G) || report_view_graphs_clicked()) {
+                viewingGraphs = true;
             } else if (IsKeyPressed(KEY_N) || report_new_shift_clicked()) {
                 if (sim.shift == SHIFT_DAY) {
                     sim_start_night(&sim);       // same patients, night staff
+                    showRoster = true;           // show who's on before the shift starts
+                    recorded = false;
                 } else {
-                    int next = sim.day + 1;      // the day is over: start fresh
-                    sim_free(&sim);
-                    sim_init(&sim, next);
+                    setupDay = sim.day + 1;      // the day is over: set up the next one
+                    showSetup = true;
                 }
                 paused = false;
-                showRoster = true;           // show who's on before the shift starts
             }
         } else if (operating) {
             // The mini-game menu or a game: the simulation waits until it's closed
@@ -198,16 +235,21 @@ int main(void)
             if (IsKeyPressed(KEY_DOWN) && speed > 0.5f) speed /= 2.0f;
             if (IsKeyPressed(KEY_E)) sim_add_patient(&sim, 1);
             if (IsKeyPressed(KEY_H)) sim_add_rescue(&sim);     // search and rescue, by helicopter
-            if (IsKeyPressed(KEY_R)) {
-                int day = sim.day;
-                sim_free(&sim);
-                sim_init(&sim, day);
+            if (IsKeyPressed(KEY_C)) sim_power_cut(&sim);      // cut the power
+            if (IsKeyPressed(KEY_R)) {                         // restart the day: back to the setup screen
+                setupDay = sim.day;
+                showSetup = true;
             }
  
             // Update
-            if (!paused) sim_update(&sim, GetFrameTime() * speed);
+            if (!paused && !showSetup) sim_update(&sim, GetFrameTime() * speed);
             minigames_watch(&sim);       // someone ready for a game: offer it
-            sound_update(&sim, paused);  // siren and monitor alarm
+            if (sim_generator_needed(&sim) && !minigames_active()) minigames_start_generator(&sim);   // the generator won't start
+            sound_update(&sim, paused);  // siren, monitor alarm and the power going off
+            if (sim.shiftOver && !recorded) {                  // the shift's just ended: remember how it went
+                setup_record_shift(&sim);
+                recorded = true;
+            }
         }
 
         // The helicopter and rain sounds belong to the 3D view (and the
@@ -219,14 +261,16 @@ int main(void)
  
         // Draw
         BeginDrawing();
-        if (!showRoster && !sim.shiftOver && minigames_active()) {
+        if (playing && minigames_active()) {
             minigames_draw(&sim, fit_screen());          // the mini-game menu or a game, scaled to fit
-        } else if (!showRoster && !sim.shiftOver && view3d) {
+        } else if (playing && view3d) {
             view3d_draw(&sim, speed, paused);            // the whole window
         } else {
             fit = fit_screen();
             BeginMode2D(fit);                            // 2D screens, scaled to fit
-            if (showRoster)                  draw_roster_screen(sim.day, sim.shift);
+            if (showSetup)                   draw_setup_screen(&setup, setupDay);
+            else if (showRoster)             draw_roster_screen(&sim.setup, sim.day, sim.shift);
+            else if (sim.shiftOver && viewingGraphs) draw_graphs_page(&sim);
             else if (sim.shiftOver && viewingLog) draw_patient_log(&sim, logScroll);
             else if (sim.shiftOver && viewingKit) draw_equipment_report(&sim);
             else if (sim.shiftOver)          draw_shift_report(&sim);

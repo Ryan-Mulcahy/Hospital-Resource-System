@@ -6,11 +6,14 @@
 #include "draw.h"            // colours and screen size
 #include "roster.h"
  
+// (Big enough for the most staff the setup screen allows on a day and a
+// night, so nobody works the night after their day.)
 static const char *NURSE_POOL[] = {
-    "Aoife", "Ciaran", "Niamh", "Sean", "Orla", "Darragh", "Meabh", "Conor", "Grainne"
+    "Aoife", "Ciaran", "Niamh", "Sean", "Orla", "Darragh", "Meabh", "Conor", "Grainne",
+    "Eoin", "Sinead", "Padraig", "Aisling", "Fionn", "Roisin", "Cathal"
 };
 static const char *DOCTOR_POOL[] = {
-    "Byrne", "Walsh", "Kelly", "Murphy", "Nolan"
+    "Byrne", "Walsh", "Kelly", "Murphy", "Nolan", "O'Brien", "Daly", "Quinn", "Farrell"
 };
 // The on-call doctors take turns, one per shift. They're kept apart from the
 // doctors above, so the on-call doctor is never someone who has just worked a
@@ -35,15 +38,15 @@ static int pool_start(int shiftNumber, int dayCount, int nightCount, int poolSiz
     return (daysBefore * dayCount + nightsBefore * nightCount) % poolSize;
 }
  
-const char *roster_nurse(int shiftNumber, int k)
+const char *roster_nurse(const Setup *setup, int shiftNumber, int k)
 {
-    int start = pool_start(shiftNumber, NURSE_COUNT, NIGHT_NURSES, NURSE_POOL_SIZE);
+    int start = pool_start(shiftNumber, setup->nurses[SHIFT_DAY], setup->nurses[SHIFT_NIGHT], NURSE_POOL_SIZE);
     return NURSE_POOL[(start + k) % NURSE_POOL_SIZE];
 }
  
-const char *roster_doctor(int shiftNumber, int k)
+const char *roster_doctor(const Setup *setup, int shiftNumber, int k)
 {
-    int start = pool_start(shiftNumber, DOCTOR_COUNT, NIGHT_DOCTORS, DOCTOR_POOL_SIZE);
+    int start = pool_start(shiftNumber, setup->doctors[SHIFT_DAY], setup->doctors[SHIFT_NIGHT], DOCTOR_POOL_SIZE);
     return DOCTOR_POOL[(start + k) % DOCTOR_POOL_SIZE];
 }
  
@@ -56,8 +59,8 @@ const char *roster_on_call(int shiftNumber)
 void roster_assign(Sim *sim)
 {
     int s = roster_shift_number(sim->day, sim->shift);
-    for (int k = 0; k < NURSES_ON(sim->shift); k++)  sim->nurses[k].name  = roster_nurse(s, k);
-    for (int k = 0; k < DOCTORS_ON(sim->shift); k++) sim->doctors[k].name = roster_doctor(s, k);
+    for (int k = 0; k < sim_nurses_on(sim); k++)     sim->nurses[k].name  = roster_nurse(&sim->setup, s, k);
+    for (int k = 0; k < sim_shift_doctors(sim); k++) sim->doctors[k].name = roster_doctor(&sim->setup, s, k);
 }
  
 // ---- Roster screen ----
@@ -79,7 +82,7 @@ static void centered(const char *text, int y, int size, Color color)
 }
  
 // One column of the roster: which shift it is, then its nurses and doctors.
-static void draw_team(int x, const char *heading, int day, ShiftType shift)
+static void draw_team(const Setup *setup, int x, const char *heading, int day, ShiftType shift)
 {
     int s = roster_shift_number(day, shift);
     bool night = (shift == SHIFT_NIGHT);
@@ -90,15 +93,22 @@ static void draw_team(int x, const char *heading, int day, ShiftType shift)
  
     int y = 222;
     DrawText("NURSES", x, y, 14, C_MUTED);                          y += 22;
-    for (int k = 0; k < NURSES_ON(shift); k++) {
-        DrawCircle(x + 6, y + 9, 6, C_BRAND);
-        DrawText(roster_nurse(s, k), x + 20, y, 20, C_INK);         y += 24;
+    // Up to 6 nurses: in two columns if there are more than 4
+    int n = setup->nurses[shift];
+    for (int k = 0; k < n; k++) {
+        int col = (n > 4) ? k % 2 : 0;
+        DrawCircle(x + 6 + col * 150, y + 9, 6, C_BRAND);
+        DrawText(roster_nurse(setup, s, k), x + 20 + col * 150, y, 20, C_INK);
+        if (n <= 4 || col == 1 || k == n - 1) y += 24;
     }
     y += 6;
     DrawText("DOCTORS", x, y, 14, C_MUTED);                         y += 22;
-    for (int k = 0; k < DOCTORS_ON(shift); k++) {
-        DrawCircle(x + 6, y + 9, 6, C_INK);
-        DrawText(TextFormat("Dr %s", roster_doctor(s, k)), x + 20, y, 20, C_INK);  y += 24;
+    int d = setup->doctors[shift];                                  // (two columns if more than 2)
+    for (int k = 0; k < d; k++) {
+        int col = (d > 2) ? k % 2 : 0;
+        DrawCircle(x + 6 + col * 150, y + 9, 6, C_INK);
+        DrawText(TextFormat("Dr %s", roster_doctor(setup, s, k)), x + 20 + col * 150, y, 20, C_INK);
+        if (d <= 2 || col == 1 || k == d - 1) y += 24;
     }
     // The on-call doctor: at home unless they're needed (sim.c calls them in)
     const char *onCall = TextFormat("Dr %s", roster_on_call(s));
@@ -108,7 +118,7 @@ static void draw_team(int x, const char *heading, int day, ShiftType shift)
     DrawText(TextFormat("comes in if %d are waiting for a doctor", ON_CALL_AT), x + 20, y, 12, C_MUTED);
 }
  
-void draw_roster_screen(int day, ShiftType shift)
+void draw_roster_screen(const Setup *setup, int day, ShiftType shift)
 {
     ClearBackground(C_BG);
     Rectangle card = { 100, 30, 800, 545 };
@@ -121,8 +131,8 @@ void draw_roster_screen(int day, ShiftType shift)
     // Left: the shift about to start. Right: the shift after it.
     int nextDay = (shift == SHIFT_NIGHT) ? day + 1 : day;
     ShiftType nextShift = (shift == SHIFT_NIGHT) ? SHIFT_DAY : SHIFT_NIGHT;
-    draw_team(170, "ON THIS SHIFT", day, shift);
-    draw_team(560, "NEXT SHIFT", nextDay, nextShift);
+    draw_team(setup, 170, "ON THIS SHIFT", day, shift);
+    draw_team(setup, 560, "NEXT SHIFT", nextDay, nextShift);
     DrawLine(SCREEN_W / 2, 140, SCREEN_W / 2, 450, C_EDGE);
  
     // Start button

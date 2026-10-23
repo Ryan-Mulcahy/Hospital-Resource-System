@@ -30,6 +30,9 @@ int conditions_load(const char *filename);
 // of that severity was loaded, a built-in "Unspecified" entry is returned.
 const Condition *conditions_random(int severity);
 
+// The condition with this exact name (as in conditions.csv), or NULL.
+const Condition *conditions_find(const char *name);
+
 // Who flies a rescue patient in. Each service has its own helicopter colours
 // and its own message.
 typedef enum { SERVICE_COAST_GUARD, SERVICE_SEARCH_RESCUE, SERVICE_FIRE, SERVICE_COUNT } RescueService;

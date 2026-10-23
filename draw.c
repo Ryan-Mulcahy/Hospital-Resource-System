@@ -3,6 +3,8 @@
 // The colours follow the shift: light by day, dark for the night shift.
 
 #include <stddef.h>
+#include <stdio.h>
+#include <string.h>
 #include <math.h>
 #include "raylib.h"
 #include "draw.h"
@@ -163,6 +165,11 @@ static void draw_beds(const Sim *sim)
         if (resus) DrawText("Resus", x + 8, y0 + 8, 14, C_EMERGENCY);
         else       DrawText(TextFormat("Bed %d", i + 1), x + 8, y0 + 8, 14, t.ink);
 
+        if (!sim_bed_open(sim, i)) {                 // closed for the day (setup screen)
+            DrawRectangleRounded((Rectangle){ x + 4, y0 + 28, w - 8, h - 36 }, 0.2f, 6, t.edge);
+            draw_text_centered("closed", x + w / 2, y0 + 66, 14, w - 8, t.muted);
+            continue;
+        }
         if (p == NULL) {
             draw_text_centered("free", x + w / 2, y0 + 66, 14, w - 8, t.light);
             continue;
@@ -204,13 +211,28 @@ static void draw_beds(const Sim *sim)
     }
 }
 
+// Text that fits in `width`: smaller (down to 10) if it has to be, then cut short
+static void fitted_text(const char *text, int x, int y, int size, int width, Color c)
+{
+    char buf[64];
+    snprintf(buf, sizeof buf, "%s", text);      // (a copy: `text` may be TextFormat's, which gets reused)
+    while (size > 10 && MeasureText(buf, size) > width) size--;
+    size_t len = strlen(buf);
+    while (len > 1 && MeasureText(buf, size) > width) buf[--len] = '\0';
+    DrawText(buf, x, y, size, c);
+}
+
 static void draw_nurses(const Sim *sim)
 {
-    const int x0 = 40, y0 = 480, w = 78, h = 40, gap = 8;
+    // The cards get narrower when there are more staff, so they fit in the row
+    const int x0 = 40, y0 = 480, h = 40, gap = 6;
+    int people = sim_nurses_on(sim) + sim_doctors_on(sim);
+    int w = (600 - gap * (people - 1)) / people;
+    if (w > 78) w = 78;
 
     DrawText("STAFF", x0, y0 - 28, 20, t.ink);
 
-    for (int d = 0; d < NURSES_ON(sim->shift); d++) {
+    for (int d = 0; d < sim_nurses_on(sim); d++) {
         int x = x0 + d * (w + gap);
         int bed = sim->nurses[d].busyWithBed;
         bool busy = (bed != -1);
@@ -220,26 +242,28 @@ static void draw_nurses(const Sim *sim)
         DrawRectangleRoundedLines(card, 0.4f, 8, t.edge);
         //DrawRectangle(x, y0, w, h, busy ? C_BRAND : C_CARD);
         //DrawRectangleLines(x, y0, w, h, C_EDGE);
-        DrawText(sim->nurses[d].name, x + 8, y0 + 6, 14, busy ? WHITE : t.ink);
-        DrawText(busy ? (bed == RESUS_BED ? "Resus" : TextFormat("Bed %d", bed + 1)) : "free",
-                 x + 8, y0 + 22, 12, busy ? WHITE : t.light);
+        fitted_text(sim->nurses[d].name, x + 6, y0 + 6, 14, w - 10, busy ? WHITE : t.ink);
+        fitted_text(busy ? (bed == RESUS_BED ? "Resus" : TextFormat("Bed %d", bed + 1)) : "free",
+                    x + 6, y0 + 22, 12, w - 10, busy ? WHITE : t.light);
     }
 
     // Doctors go in the same row, after the nurses, in a darker colour (and
     // the on-call doctor, when they've been called in, with a red edge)
     for (int d = 0; d < sim_doctors_on(sim); d++) {
-        int x = x0 + (NURSES_ON(sim->shift) + d) * (w + gap);
+        int x = x0 + (sim_nurses_on(sim) + d) * (w + gap);
         int bed = sim->doctors[d].busyWithBed;
         bool busy = (bed != -1);
 
         Rectangle card = { x, y0, w, h };
-        bool onCall = (d >= DOCTORS_ON(sim->shift));
+        bool onCall = (d >= sim_shift_doctors(sim));
         DrawRectangleRounded(card, 0.4f, 8, busy ? t.doctorBusy : t.card);
         DrawRectangleRoundedLines(card, 0.4f, 8, onCall ? C_EMERGENCY : t.edge);
-        DrawText(TextFormat("Dr %s", sim->doctors[d].name), x + 8, y0 + 6, 14, busy ? WHITE : t.ink);
+        // ("Dr Byrne", or just "Byrne" on a narrow card: doctors' cards are the dark ones)
+        const char *name = (w >= 70) ? TextFormat("Dr %s", sim->doctors[d].name) : sim->doctors[d].name;
+        fitted_text(name, x + 6, y0 + 6, 14, w - 10, busy ? WHITE : t.ink);
         const char *where = busy ? (bed == RESUS_BED ? "Resus" : TextFormat("Bed %d", bed + 1)) : "free";
         if (onCall && !busy) where = "on call";
-        DrawText(where, x + 8, y0 + 22, 12, busy ? WHITE : (onCall ? C_EMERGENCY : t.light));
+        fitted_text(where, x + 6, y0 + 22, 12, w - 10, busy ? WHITE : (onCall ? C_EMERGENCY : t.light));
     }
 }
 
@@ -251,7 +275,7 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
         if (sim->beds[i].occupant != NULL) inBeds++;
     }
     int busyNurses = 0;
-    for (int d = 0; d < NURSE_COUNT; d++) {
+    for (int d = 0; d < NURSE_MAX; d++) {
         if (sim->nurses[d].busyWithBed != -1) busyNurses++;
     }
 
@@ -278,7 +302,7 @@ static void draw_stats(const Sim *sim, float speed, bool paused)
     DrawText(TextFormat("Beds used:  %d / %d", inBeds, BED_COUNT),    x, y + 3 * line + 8, 16, t.ink);
     DrawText(TextFormat("Treated:    %d", sim->stats.treated),              x, y + 4 * line + 8, 16, t.ink);
     DrawText(TextFormat("Avg wait:   %.1f s", avgWait),               x, y + 5 * line + 8, 16, t.ink);
-    DrawText(TextFormat("Nurses:    %d / %d", busyNurses, NURSES_ON(sim->shift)), x, y + 6 * line + 8, 16, t.ink);
+    DrawText(TextFormat("Nurses:    %d / %d", busyNurses, sim_nurses_on(sim)), x, y + 6 * line + 8, 16, t.ink);
 
     DrawText(TextFormat("Doctors:    %d / %d%s", busyDoctors, sim_doctors_on(sim), sim->onCall ? "  (on call in)" : ""),
              x, y + 7 * line + 8, 16, sim->onCall ? t.alert : t.ink);
@@ -383,6 +407,64 @@ bool draw_rescue_banner(const Sim *sim, int centreX, int y)
     return arrived;
 }
 
+// ---- Power cuts and major incidents ----
+
+void draw_power_overlay(const Sim *sim, float w, float h, bool lamps)
+{
+    float lights = sim_lights(sim);
+    if (lights >= 1.0f) return;
+    float dark = 1.0f - lights;
+    float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 3.0f);
+    DrawRectangle(0, 0, (int)w, (int)h, (Color){ 0, 0, 8, (unsigned char)(165 * dark) });          // the lights are out
+    DrawRectangle(0, 0, (int)w, (int)h, (Color){ 150, 0, 0, (unsigned char)((25 + 25 * pulse) * dark) });  // red emergency lights
+    if (!lamps) return;
+    // The emergency lamps themselves, high up on the walls
+    for (int k = 0; k < 2; k++) {
+        float x = (k == 0) ? 30.0f : w - 30.0f;
+        for (int r = 6; r >= 1; r--)                 // a soft glow: rings, fainter further out
+            DrawCircle((int)x, 20, r * (12 + 2 * pulse), (Color){ 255, 60, 40, (unsigned char)(22 * dark) });
+        DrawCircle((int)x, 20, 7, (Color){ 255, 120, 90, (unsigned char)(255 * dark) });
+    }
+}
+
+void draw_power_status(const Sim *sim, int centreX, int y)
+{
+    const char *line1 = NULL, *line2 = NULL;
+    Color bg = { 140, 20, 24, 235 };
+    if (sim->power == POWER_OUT) {
+        line1 = "POWER CUT  -  emergency lighting";
+        if (sim->generatorStuck)                         line2 = "The generator won't start!";
+        else if (sim->powerTimer > GENERATOR_START + 0.01f)
+            line2 = TextFormat("Electricians on the way: about %.0f min", sim_minutes(sim->powerTimer));
+        else                                             line2 = "Backup generator starting...";
+    } else if (sim->powerBackAt >= 0.0f && sim->clock - sim->powerBackAt < 4.0f) {
+        line1 = "POWER BACK  -  running on the generator";
+        bg = (Color){ 40, 120, 70, 235 };
+    }
+    if (line1 == NULL) return;
+    int w = MeasureText(line1, 22) + 40;
+    if (line2 && MeasureText(line2, 16) + 40 > w) w = MeasureText(line2, 16) + 40;
+    int h = line2 ? 64 : 38;
+    DrawRectangleRounded((Rectangle){ (float)(centreX - w / 2), (float)y, (float)w, (float)h }, 0.3f, 8, bg);
+    DrawText(line1, centreX - MeasureText(line1, 22) / 2, y + 8, 22, WHITE);
+    if (line2) DrawText(line2, centreX - MeasureText(line2, 16) / 2, y + 38, 16, (Color){ 255, 220, 210, 255 });
+}
+
+void draw_incident_banner(const Sim *sim, int centreX, int y)
+{
+    if (sim->incidentSince < 0.0f) return;
+    float since = sim->clock - sim->incidentSince;
+    if (since < 0.0f || (sim->incidentLeft == 0 && since > 20.0f)) return;      // shown while they arrive, and a bit after
+    float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 6.0f);
+    const char *text = sim->incidentLeft > 0
+        ? TextFormat("MAJOR INCIDENT: %d more casualties coming", sim->incidentLeft)
+        : "MAJOR INCIDENT: all the casualties are in";
+    int w = MeasureText(text, 16) + 30;
+    DrawRectangleRounded((Rectangle){ (float)(centreX - w / 2), (float)y, (float)w, 26 }, 0.5f, 8,
+                         (Color){ 200, 40, 40, (unsigned char)(190 + 65 * pulse) });
+    DrawText(text, centreX - MeasureText(text, 16) / 2, y + 5, 16, WHITE);
+}
+
 void draw_frame(const Sim *sim, float speed, bool paused)
 {
     t = (sim->shift == SHIFT_NIGHT) ? NIGHT_THEME : DAY_THEME;
@@ -395,7 +477,10 @@ void draw_frame(const Sim *sim, float speed, bool paused)
     draw_nurses(sim);
     draw_stats(sim, speed, paused);
     draw_game_badges(sim);
-    DrawText("V 3D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   G games (or O S X P)   M mute   R reset",
-             40, SCREEN_H - 40, 16, t.muted);
+    DrawText("V 3D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   C power cut   G games (or O S X P)   M mute   R restart",
+             40, SCREEN_H - 38, 14, t.muted);
     draw_rescue_banner(sim, 810, 6);
+    draw_incident_banner(sim, 400, 138);               // in the waiting room, where they arrive
+    draw_power_overlay(sim, SCREEN_W, SCREEN_H, true);  // dark, in a power cut
+    draw_power_status(sim, SCREEN_W / 2, 250);
 }

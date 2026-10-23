@@ -18,6 +18,7 @@
 #include "pharmgame.h"
 #include "drivegame.h"
 #include "heligame.h"
+#include "gengame.h"          // (not on the menu: it opens when the generator fails)
 #include "minigames.h"
 
 static bool menuOpen = false;
@@ -69,7 +70,8 @@ static int offer_for(MiniGame g)
 static bool game_on(void)
 {
     return opgame_active() || defibgame_active() || spingame_active() || scangame_active() ||
-           triagegame_active() || pharmgame_active() || drivegame_active() || heligame_active();
+           triagegame_active() || pharmgame_active() || drivegame_active() || heligame_active() ||
+           gengame_active();
 }
 
 // ---- The calls from main.c ----
@@ -103,6 +105,15 @@ static void start_game(Sim *sim, MiniGame g)
 
 bool minigames_rotor(void) { return heligame_flying(); }
 
+void minigames_start_generator(Sim *sim)
+{
+    (void)sim;
+    if (game_on()) return;
+    menuOpen = false;
+    fromMenu = false;
+    gengame_start();
+}
+
 void minigames_start(Sim *sim, MiniGame game)
 {
     menuOpen = false;
@@ -126,6 +137,7 @@ void minigames_update(Sim *sim)
         pharmgame_update(sim);
         drivegame_update(sim);
         heligame_update(sim);
+        gengame_update(sim);
         if (!game_on() && fromMenu) menuOpen = true;   // finished: back to the menu
         return;
     }
@@ -219,6 +231,7 @@ void minigames_draw(const Sim *sim, Camera2D fit)
     if (pharmgame_active()) { pharmgame_draw(fit); return; }
     if (drivegame_active()) { drivegame_draw(fit); return; }
     if (heligame_active())  { heligame_draw(fit);  return; }
+    if (gengame_active())   { gengame_draw(fit);   return; }
     if (!menuOpen) return;
 
     ClearBackground(C_BG);

@@ -18,6 +18,8 @@ typedef enum {
     SND_RAIN,       // rain (on a loop while it rains, 3D view)
     SND_CHARGE,     // the defibrillator charging: a rising whine
     SND_ZAP,        // the defibrillator's shock
+    SND_POWER_DOWN, // the power going off: a hum sinking away, and a clunk
+    SND_GENERATOR,  // the generator starting: a cough, then a rising rumble
     SND_COUNT
 } SoundId;
 

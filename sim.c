@@ -11,6 +11,7 @@
 // Equipment (monitors, ventilators, defibrillators, drip pumps, wheelchairs)
 // is shared: a patient who needs something waits until one is free.
  
+#include <math.h>            // fmodf
 #include <stdio.h>           // snprintf, printf
 #include <stdlib.h>
 #include <string.h>          // strncmp
@@ -21,6 +22,11 @@
  
 static float random_arrival_gap(const Sim *sim)
 {
+    // Flu season: about half as many patients again, day and night
+    if (sim->setup.scenario == SCENARIO_FLU) {
+        if (sim->shift == SHIFT_NIGHT) return (float)GetRandomValue(NIGHT_GAP_MIN, NIGHT_GAP_MAX) / 10.0f * 0.65f;
+        return (float)GetRandomValue(6, 20) / 10.0f * 0.65f;
+    }
     // Day: 0.6 to 2.0 seconds. Night: NIGHT_GAP_MIN to NIGHT_GAP_MAX, because
     // fewer patients come in at night and only 1 doctor is on.
     if (sim->shift == SHIFT_NIGHT) return (float)GetRandomValue(NIGHT_GAP_MIN, NIGHT_GAP_MAX) / 10.0f;
@@ -72,9 +78,166 @@ static void rooms_init(Sim *sim)
         sim->rooms[r].capacity = ROOM_INFO[r].capacity;
         sim->rooms[r].duration = ROOM_INFO[r].duration;
     }
-    for (int e = 0; e < EQUIP_TYPES; e++) {
-        sim->equipment[e] = (Equipment){ EQUIP_INFO[e].name, EQUIP_INFO[e].key, EQUIP_INFO[e].total, 0 };
+    for (int e = 0; e < EQUIP_TYPES; e++) {      // as many of each as the day's setup says
+        sim->equipment[e] = (Equipment){ EQUIP_INFO[e].name, EQUIP_INFO[e].key, sim->setup.equipment[e], 0 };
     }
+}
+
+void sim_default_setup(Setup *setup)
+{
+    *setup = (Setup){ 0 };
+    setup->scenario = SCENARIO_NORMAL;
+    setup->nurses[SHIFT_DAY] = 4;    setup->nurses[SHIFT_NIGHT] = 2;
+    setup->doctors[SHIFT_DAY] = 2;   setup->doctors[SHIFT_NIGHT] = 1;
+    setup->beds = BED_COUNT - 1;
+    for (int e = 0; e < EQUIP_TYPES; e++) setup->equipment[e] = EQUIP_INFO[e].total;
+    setup->powerCuts = true;
+}
+
+static int clamp_int(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+void sim_clamp_setup(Setup *setup)
+{
+    if ((int)setup->scenario < 0 || setup->scenario >= SCENARIO_COUNT) setup->scenario = SCENARIO_NORMAL;
+    for (int sh = 0; sh < 2; sh++) {
+        setup->nurses[sh]  = clamp_int(setup->nurses[sh],  SETUP_NURSES_MIN,  NURSE_MAX);
+        setup->doctors[sh] = clamp_int(setup->doctors[sh], SETUP_DOCTORS_MIN, DOCTOR_MAX);
+    }
+    setup->beds = clamp_int(setup->beds, SETUP_BEDS_MIN, BED_COUNT - 1);
+    for (int e = 0; e < EQUIP_TYPES; e++) setup->equipment[e] = clamp_int(setup->equipment[e], 1, EQUIP_MAX_EACH);
+}
+
+int sim_nurses_on(const Sim *sim)     { return sim->setup.nurses[sim->shift]; }
+int sim_shift_doctors(const Sim *sim) { return sim->setup.doctors[sim->shift]; }
+
+bool sim_bed_open(const Sim *sim, int bed)
+{
+    return bed == RESUS_BED || (bed >= 0 && bed < sim->setup.beds);
+}
+
+static Patient *new_patient(Sim *sim, int severity);         // (further down)
+static void set_condition(Patient *p, const Condition *c);
+
+float sim_shift_time(const Sim *sim)
+{
+    return sim->clock - (sim->shift == SHIFT_NIGHT ? SHIFT_LENGTH : 0.0f);
+}
+
+const char *sim_scenario_name(Scenario s)
+{
+    switch (s) {
+    case SCENARIO_FLU:            return "Flu season";
+    case SCENARIO_MAJOR_INCIDENT: return "Major incident";
+    default:                      return "Normal day";
+    }
+}
+
+const char *sim_event_name(EventType e)
+{
+    switch (e) {
+    case EVENT_HELI_LANDED: return "Helicopter landed";
+    case EVENT_ON_CALL:     return "On-call doctor in";
+    case EVENT_POWER_OFF:   return "Power off";
+    case EVENT_POWER_ON:    return "Power back";
+    case EVENT_INCIDENT:    return "Major incident";
+    default:                return "";
+    }
+}
+
+// Note that something happened now, for the graphs on the report
+static void add_event(Sim *sim, EventType type)
+{
+    if (sim->stats.eventCount < MAX_EVENTS)
+        sim->stats.events[sim->stats.eventCount++] = (ShiftEvent){ sim_shift_time(sim), type };
+}
+
+// ---- Power cuts ----
+
+// Maybe a power cut by itself some time this shift (if they're switched on)
+static void schedule_power_cut(Sim *sim)
+{
+    sim->nextPowerCut = -1.0f;
+    if (!sim->setup.powerCuts || GetRandomValue(1, 100) > POWER_CUT_CHANCE) return;
+    float start = (sim->shift == SHIFT_NIGHT) ? SHIFT_LENGTH : 0.0f;
+    sim->nextPowerCut = start + SHIFT_LENGTH * (float)GetRandomValue(15, 85) / 100.0f;
+}
+
+static bool is_scanner(int room) { return room == ROOM_XRAY || room == ROOM_CT || room == ROOM_MRI; }
+
+void sim_power_cut(Sim *sim)
+{
+    if (sim->power == POWER_OUT || sim->shiftOver) return;
+    sim->power = POWER_OUT;
+    sim->powerTimer = GENERATOR_START;
+    sim->generatorStuck = GetRandomValue(1, 100) <= GENERATOR_FAIL_CHANCE;
+    sim->stats.powerCuts++;
+    add_event(sim, EVENT_POWER_OFF);
+    // Who's caught by it: in a scanner, or on their way up or down in the lift
+    for (int r = 0; r < ROOM_TYPES; r++) {
+        const SimRoom *room = &sim->rooms[r];
+        for (int s = 0; s < room->capacity; s++) {
+            const Patient *p = room->in[s];
+            if (p == NULL) continue;
+            if (is_scanner(r) && p->walkLeft <= 0.0f && p->roomLeft > 0.0f) sim->stats.scansHeld++;
+            if (sim_room_floor(r) > 0 && p->walkLeft > 0.0f) sim->stats.liftStuck++;
+        }
+        if (sim_room_floor(r) > 0)
+            for (const Patient *q = room->queue; q != NULL; q = q->next) if (q->walkLeft > 0.0f) sim->stats.liftStuck++;
+    }
+}
+
+bool sim_generator_needed(const Sim *sim)
+{
+    return sim->power == POWER_OUT && sim->generatorStuck && !sim->shiftOver;
+}
+
+void sim_generator_result(Sim *sim, bool won)
+{
+    if (!sim_generator_needed(sim)) return;
+    sim->generatorStuck = false;
+    sim->stats.generatorGames++;
+    if (won) {
+        sim->powerTimer = 0.3f;              // it starts straight away
+    } else {
+        sim->powerTimer = GENERATOR_FIX;     // the electricians will have to fix it
+        sim->stats.generatorFailed++;
+    }
+}
+
+float sim_lights(const Sim *sim)
+{
+    if (sim->power == POWER_OUT) return 0.0f;
+    if (sim->powerBackAt >= 0.0f && sim->clock - sim->powerBackAt < 0.8f) {      // flickering back on
+        return fmodf((sim->clock - sim->powerBackAt) * 9.0f, 1.0f) < 0.5f ? 1.0f : 0.25f;
+    }
+    return 1.0f;
+}
+
+// Is a walk to this room held up by the power cut? (The lifts are off.)
+static bool walk_stopped(const Sim *sim, int room)
+{
+    return sim->power == POWER_OUT && sim_room_floor(room) > 0;
+}
+
+// ---- A major incident ----
+// The casualties of a bus crash: injuries, mostly bad ones. (Falls back to
+// any condition of that severity if conditions.csv doesn't have these.)
+static void add_casualty(Sim *sim)
+{
+    static const char *const BAD[] = { "Head injury (car crash)", "Internal bleeding" };
+    static const char *const MID[] = { "Broken hip", "Broken wrist", "Chest pain" };
+    static const char *const MINOR[] = { "Cut hand", "Ankle sprain", "Sprained knee", "Back pain" };
+    int roll = GetRandomValue(1, 100);
+    int severity = roll <= 50 ? 1 : roll <= 85 ? 2 : 3;
+    const char *name = severity == 1 ? BAD[GetRandomValue(0, 1)] : severity == 2 ? MID[GetRandomValue(0, 2)] : MINOR[GetRandomValue(0, 3)];
+    Patient *p = new_patient(sim, severity);
+    if (p == NULL) return;
+    const Condition *c = conditions_find(name);
+    if (c != NULL && c->severity == severity) set_condition(p, c);
+    queue_insert(&sim->waiting, p);
+    sim->waitingCount++;
+    sim->stats.arrived++;
+    sim->stats.incidentCasualties++;
 }
 
 int sim_room_floor(int room)
@@ -267,10 +430,12 @@ static void update_rooms(Sim *sim, float dt)
             if (p == NULL) continue;
             busy++;
             if (p->walkLeft > 0.0f) {                                  // still walking there
+                if (walk_stopped(sim, r)) continue;                    // (stuck in the lift: power cut)
                 p->walkLeft -= dt;
                 if (p->walkLeft <= 0.0f) arrived(sim, p);
                 continue;
             }
+            if (sim->power == POWER_OUT && is_scanner(r)) continue;   // the scanner's off: they wait in it
             p->roomLeft -= dt;
             if (p->roomLeft > 0.0f) continue;
             p->roomLeft = 0.0f;
@@ -288,7 +453,7 @@ static void update_rooms(Sim *sim, float dt)
         sim->stats.roomBusyTime[r] += busy * dt;
         if (room->queueCount > sim->stats.roomLongestQueue[r]) sim->stats.roomLongestQueue[r] = room->queueCount;
         for (Patient *q = room->queue; q != NULL; q = q->next) {   // walking to the queue
-            if (q->walkLeft > 0.0f) {
+            if (q->walkLeft > 0.0f && !walk_stopped(sim, r)) {
                 q->walkLeft -= dt;
                 if (q->walkLeft <= 0.0f) arrived(sim, q);
             }
@@ -423,7 +588,7 @@ int sim_inbound_count(const Sim *sim)
 
 int sim_doctors_on(const Sim *sim)
 {
-    return DOCTORS_ON(sim->shift) + (sim->onCall ? 1 : 0);
+    return sim_shift_doctors(sim) + (sim->onCall ? 1 : 0);
 }
 
 // Rescues in the air: when one lands they go to the front of the queue
@@ -436,6 +601,7 @@ static void update_inbound(Sim *sim, float dt)
         p->roomLeft -= dt;
         if (p->roomLeft > 0.0f) break;            // (the others land after this one)
         sim->inbound = p->next;
+        add_event(sim, EVENT_HELI_LANDED);
         p->roomLeft = 0.0f;
         p->arrivalTime = sim->clock;
         p->walkLeft = HELI_WALK_IN;
@@ -590,9 +756,12 @@ void sim_landing_result(Sim *sim, int id, bool won)
     }
 }
 
-void sim_init(Sim *sim, int day)
+void sim_init(Sim *sim, int day, const Setup *setup)
 {
     *sim = (Sim){ 0 };
+    if (setup != NULL) sim->setup = *setup;
+    else               sim_default_setup(&sim->setup);
+    sim_clamp_setup(&sim->setup);
     sim->onCallComing = -1.0f;
     sim->lastLanding = -100.0f;
     sim->day = day;
@@ -601,7 +770,14 @@ void sim_init(Sim *sim, int day)
     sim->nextArrival = random_arrival_gap(sim);
     rooms_init(sim);
     schedule_rescue(sim, 0.10f, 0.60f);
-    for (int d = 0; d < NURSE_COUNT; d++) {
+    sim->power = POWER_ON;
+    sim->powerBackAt = -1.0f;
+    schedule_power_cut(sim);
+    // The bus crash: some time in the middle of the day shift
+    sim->incidentAt = (sim->setup.scenario == SCENARIO_MAJOR_INCIDENT)
+                    ? SHIFT_LENGTH * (float)GetRandomValue(25, 55) / 100.0f : -1.0f;
+    sim->incidentSince = -1.0f;
+    for (int d = 0; d < NURSE_MAX; d++) {
         sim->nurses[d].busyWithBed = -1;
     }
     for (int d = 0; d < DOCTOR_SLOTS; d++) {
@@ -612,7 +788,7 @@ void sim_init(Sim *sim, int day)
  
 int sim_nurse_at(const Sim *sim, int bed)
 {
-    for (int d = 0; d < NURSE_COUNT; d++) {
+    for (int d = 0; d < NURSE_MAX; d++) {
         if (sim->nurses[d].busyWithBed == bed) return d;
     }
     return -1;
@@ -783,10 +959,16 @@ void sim_start_night(Sim *sim)
  
     // Staff who aren't on nights go home. Their patients keep their bed and
     // their progress, and the night staff pick them up.
-    for (int d = NURSES_ON(SHIFT_NIGHT); d < NURSE_COUNT; d++)   sim->nurses[d].busyWithBed = -1;
-    for (int d = DOCTORS_ON(SHIFT_NIGHT); d < DOCTOR_SLOTS; d++) sim->doctors[d].busyWithBed = -1;
+    for (int d = sim->setup.nurses[SHIFT_NIGHT]; d < NURSE_MAX; d++)     sim->nurses[d].busyWithBed = -1;
+    for (int d = sim->setup.doctors[SHIFT_NIGHT]; d < DOCTOR_SLOTS; d++) sim->doctors[d].busyWithBed = -1;
     sim->onCall = false;             // the on-call doctor goes home too
     sim->onCallComing = -1.0f;
+
+    // The power is back on for the new shift (if it wasn't), and maybe it'll go again
+    sim->power = POWER_ON;
+    sim->generatorStuck = false;
+    sim->powerBackAt = -1.0f;
+    schedule_power_cut(sim);
  
     roster_assign(sim);      // night shift staff
 }
@@ -933,7 +1115,37 @@ void sim_update(Sim *sim, float dt)
     if (sim->clock + dt >= shift_end(sim)) dt = shift_end(sim) - sim->clock;
     sim->clock += dt;
  
-    // 1. Arrivals, and now and then a helicopter rescue
+    // 0. The power: a cut by itself, and the generator starting
+    if (sim->nextPowerCut >= 0.0f && sim->clock >= sim->nextPowerCut) {
+        sim->nextPowerCut = -1.0f;
+        sim_power_cut(sim);
+    }
+    if (sim->power == POWER_OUT) {
+        sim->stats.powerOffTime += dt;
+        if (!sim->generatorStuck) {
+            sim->powerTimer -= dt;
+            if (sim->powerTimer <= 0.0f) {
+                sim->power = POWER_ON;
+                sim->powerBackAt = sim->clock;
+                add_event(sim, EVENT_POWER_ON);
+            }
+        }
+    }
+    float speed = (sim->power == POWER_OUT) ? DARK_TREATMENT_SPEED : 1.0f;   // treatment under the emergency lights
+
+    // 1. Arrivals, and now and then a helicopter rescue; a major incident's casualties
+    if (sim->incidentAt >= 0.0f && sim->clock >= sim->incidentAt) {
+        sim->incidentAt = -1.0f;
+        sim->incidentLeft = 12;
+        sim->incidentNext = sim->clock;
+        sim->incidentSince = sim->clock;
+        add_event(sim, EVENT_INCIDENT);
+    }
+    while (sim->incidentLeft > 0 && sim->clock >= sim->incidentNext) {
+        add_casualty(sim);
+        sim->incidentLeft--;
+        sim->incidentNext += 1.0f + (float)GetRandomValue(0, 6) / 10.0f;
+    }
     while (sim->clock >= sim->nextArrival) {
         sim_add_patient(sim, random_severity());
         sim->nextArrival += random_arrival_gap(sim);
@@ -992,7 +1204,7 @@ void sim_update(Sim *sim, float dt)
             // half speed, but can only take it so far on their own.
             if (n == -1 || still_needs(p) != 0) continue;
             if (p->treatmentLeft > nurse_limit(p)) {
-                p->treatmentLeft -= dt * NURSE_HELP_SPEED;
+                p->treatmentLeft -= dt * NURSE_HELP_SPEED * speed;
                 if (p->treatmentLeft < nurse_limit(p)) p->treatmentLeft = nurse_limit(p);
                 sim->stats.nurseHelpTime += dt;
             }
@@ -1005,7 +1217,7 @@ void sim_update(Sim *sim, float dt)
         if (!p->needsDoctor && n == -1) continue;  // waiting for a nurse (theirs went home)
         if (still_needs(p) != 0) continue;         // waiting for equipment
  
-        p->treatmentLeft -= dt;
+        p->treatmentLeft -= dt * speed;
         if (p->treatmentLeft <= 0.0f) {
             sim->stats.treatedBySeverity[p->severity - 1]++;
  
@@ -1040,7 +1252,7 @@ void sim_update(Sim *sim, float dt)
     //    nobody waiting is, and the resus bay stays free for the next one.
     for (int k = 0; k < BED_COUNT; k++) {
         int i = (k == 0) ? RESUS_BED : k - 1;
-        if (sim->beds[i].occupant != NULL) continue;
+        if (sim->beds[i].occupant != NULL || !sim_bed_open(sim, i)) continue;   // taken, or closed today
         if (sim->waiting == NULL) break;
         if (i == RESUS_BED && sim->waiting->severity != 1) continue;
  
@@ -1066,7 +1278,7 @@ void sim_update(Sim *sim, float dt)
         const Patient *p = sim->beds[i].occupant;
         if (p && !p->needsDoctor && !p->doneInAE && sim_nurse_at(sim, i) == -1) needNurse++;
     }
-    for (int d = 0; d < NURSES_ON(sim->shift); d++) {
+    for (int d = 0; d < sim_nurses_on(sim); d++) {
         int b = sim->nurses[d].busyWithBed;
         if (b == -1) { freeNurses++; continue; }
         const Patient *p = sim->beds[b].occupant;
@@ -1077,7 +1289,7 @@ void sim_update(Sim *sim, float dt)
             freeNurses++;
         }
     }
-    for (int d = 0; d < NURSES_ON(sim->shift); d++) {
+    for (int d = 0; d < sim_nurses_on(sim); d++) {
         if (sim->nurses[d].busyWithBed != -1) continue;
  
         int bed = bed_needing_nurse(sim);
@@ -1094,7 +1306,7 @@ void sim_update(Sim *sim, float dt)
         const Patient *p = sim->beds[i].occupant;
         if (p && p->needsDoctor && !p->doneInAE && sim_doctor_at(sim, i) == -1) waitingForDoctor++;
     }
-    int onCallSlot = DOCTORS_ON(sim->shift);
+    int onCallSlot = sim_shift_doctors(sim);
     if (!sim->onCall) {
         if (waitingForDoctor >= ON_CALL_AT && sim->onCallComing < 0.0f) sim->onCallComing = ON_CALL_DELAY;
         if (sim->onCallComing >= 0.0f) {
@@ -1105,6 +1317,7 @@ void sim_update(Sim *sim, float dt)
                 sim->doctors[onCallSlot].name = roster_on_call(roster_shift_number(sim->day, sim->shift));
                 sim->doctors[onCallSlot].busyWithBed = -1;
                 sim->stats.onCallCalls++;
+                add_event(sim, EVENT_ON_CALL);
             }
         }
     } else {
@@ -1146,12 +1359,21 @@ void sim_update(Sim *sim, float dt)
             for (int e = 0; e < EQUIP_TYPES; e++) if (p->equipMissing & EQUIP_BIT(e)) sim->stats.equipWaitTotal[e] += dt;
         }
     }
-    for (int d = 0; d < NURSE_COUNT; d++) {
+    for (int d = 0; d < NURSE_MAX; d++) {
         if (sim->nurses[d].busyWithBed != -1) sim->stats.nurseBusyTime += dt;
     }
-    for (int d = 0; d < DOCTORS_ON(sim->shift); d++) {      // (the shift's own doctors; on call is counted apart)
+    for (int d = 0; d < sim_shift_doctors(sim); d++) {      // (the shift's own doctors; on call is counted apart)
         if (sim->doctors[d].busyWithBed != -1) sim->stats.doctorBusyTime += dt;
     }
  
+    // 8. The graphs: the waiting room every SAMPLE_EVERY seconds
+    while (sim->stats.samples < SAMPLES && sim->stats.samples * SAMPLE_EVERY <= sim_shift_time(sim) + 0.001f) {
+        int k = sim->stats.samples++, inBeds = 0;
+        for (int i = 0; i < BED_COUNT; i++) if (sim->beds[i].occupant) inBeds++;
+        sim->stats.sampleWaiting[k] = sim->waitingCount;
+        sim->stats.sampleAvgWait[k] = sim->stats.admitted > 0 ? sim->stats.totalWait / sim->stats.admitted : 0.0f;
+        sim->stats.sampleInBeds[k] = inBeds;
+    }
+
     if (sim->clock >= shift_end(sim)) end_shift(sim);
 }

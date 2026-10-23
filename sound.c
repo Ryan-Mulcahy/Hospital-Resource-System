@@ -183,6 +183,51 @@ static Sound make_charge(void)
     return to_sound(w, 0.25f);
 }
 
+// The power going off: the hum of the building sinks away, then a clunk
+static Sound make_power_down(void)
+{
+    float len = 1.4f;
+    Wave w = new_wave(len);
+    short *out = (short *)w.data;
+    float phase = 0;
+    for (unsigned int i = 0; i < w.frameCount; i++) {
+        float t = (float)i / RATE;
+        float freq = 120.0f * (1.0f - 0.8f * t / len);                 // 120 Hz down to about 25
+        phase += 2 * PI * freq / RATE;
+        float hum = (sinf(phase) + 0.4f * sinf(phase * 2)) * (1.0f - t / len);
+        float clunk = (t > 1.05f) ? noise() * expf(-25.0f * (t - 1.05f)) : 0.0f;
+        float v = 0.6f * hum + 0.8f * clunk;
+        if (v > 1) v = 1;
+        if (v < -1) v = -1;
+        out[i] = (short)(v * edges(t, len, 0.01f, 0.05f) * 0.6f * 32767);
+    }
+    return to_sound(w, 0.5f);
+}
+
+// The generator: a few coughs, then the engine catches and the rumble rises
+static Sound make_generator(void)
+{
+    float len = 2.0f;
+    Wave w = new_wave(len);
+    short *out = (short *)w.data;
+    float phase = 0;
+    for (unsigned int i = 0; i < w.frameCount; i++) {
+        float t = (float)i / RATE;
+        float v;
+        if (t < 0.7f) {                                              // coughs
+            float c = fmodf(t, 0.23f);
+            v = noise() * expf(-30.0f * c) * 0.7f;
+        } else {                                                     // running, speeding up
+            float k = fminf((t - 0.7f) / 0.8f, 1.0f);
+            float freq = 25.0f + 30.0f * k;
+            phase += 2 * PI * freq / RATE;
+            v = (sinf(phase) > 0 ? 0.5f : -0.5f) * (0.4f + 0.6f * k) + 0.15f * noise();
+        }
+        out[i] = (short)(v * edges(t, len, 0.01f, 0.2f) * 0.5f * 32767);
+    }
+    return to_sound(w, 0.45f);
+}
+
 // The shock: a short crack of noise with a low thump under it
 static Sound make_zap(void)
 {
@@ -213,6 +258,8 @@ void sound_init(void)
     sounds[SND_RAIN]    = make_rain();
     sounds[SND_CHARGE]  = make_charge();
     sounds[SND_ZAP]     = make_zap();
+    sounds[SND_POWER_DOWN] = make_power_down();
+    sounds[SND_GENERATOR]  = make_generator();
 }
 
 void sound_close(void)
@@ -264,14 +311,21 @@ void sound_update(const Sim *sim, bool paused)
     lastId = newest;
     if (emergency) sound_play(SND_SIREN);
 
+    // The power: a sinking hum when it goes, the generator when it comes back
+    static PowerState lastPower = POWER_ON;
+    if (sim->power == POWER_OUT && lastPower == POWER_ON) sound_play(SND_POWER_DOWN);
+    if (sim->power == POWER_ON && lastPower == POWER_OUT) sound_play(SND_GENERATOR);
+    lastPower = sim->power;
+
     // Monitor alarm: one beep a second while an emergency patient in a bed
-    // has no doctor with them yet
+    // has no doctor with them yet (and while the power's off, every second anyway)
     if (paused) return;
     bool critical = false;
     for (int b = 0; b < BED_COUNT; b++) {
         const Patient *p = sim->beds[b].occupant;
         if (p && p->severity == 1 && p->walkLeft <= 0.0f && sim_doctor_at(sim, b) == -1) critical = true;
     }
+    if (sim->power == POWER_OUT) critical = true;
     double now = GetTime();
     if (critical && now >= nextBeep) {
         sound_play(SND_BEEP);

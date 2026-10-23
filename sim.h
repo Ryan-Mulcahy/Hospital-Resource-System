@@ -7,22 +7,20 @@
 #include <stdbool.h>
 #include "patient.h"
  
-// 8 A&E beds, plus a resus bay (the last bed) kept for emergencies only
+// 8 A&E beds, plus a resus bay (the last bed) kept for emergencies only.
+// Some of the 8 can be closed for the day on the setup screen.
 #define BED_COUNT    9
 #define RESUS_BED    (BED_COUNT - 1)
-#define NURSE_COUNT 4
-#define DOCTOR_COUNT 2
- 
-// Fewer staff on at night. NURSE_COUNT and DOCTOR_COUNT are the day numbers.
-#define NIGHT_NURSES  2
-#define NIGHT_DOCTORS 1
-#define NURSES_ON(shift)  ((shift) == SHIFT_NIGHT ? NIGHT_NURSES  : NURSE_COUNT)
-#define DOCTORS_ON(shift) ((shift) == SHIFT_NIGHT ? NIGHT_DOCTORS : DOCTOR_COUNT)
+
+// How many nurses and doctors are on each shift is chosen on the setup
+// screen before each day (see Setup below), up to these numbers.
+#define NURSE_MAX    6
+#define DOCTOR_MAX   4
 
 // When too many patients are waiting for a doctor, an on-call doctor is
 // called in. They take the next place after the shift's doctors
-// (doctors[DOCTORS_ON(shift)]), and go home once nobody is waiting for a doctor.
-#define DOCTOR_SLOTS   (DOCTOR_COUNT + 1)   // room for the shift's doctors and one on call
+// (doctors[sim_shift_doctors(sim)]), and go home once nobody is waiting for a doctor.
+#define DOCTOR_SLOTS   (DOCTOR_MAX + 1)     // room for the shift's doctors and one on call
 #define ON_CALL_AT     4         // patients waiting for a doctor before one is called in
 #define ON_CALL_DELAY  3.0f      // seconds (12 minutes) for them to get to the hospital
 
@@ -66,7 +64,7 @@
 #define SHIFT_HOURS    12
 #define DAY_START_HOUR 7
  
-typedef enum { SHIFT_DAY, SHIFT_NIGHT } ShiftType;
+typedef enum { SHIFT_DAY, SHIFT_NIGHT } ShiftType;   // (also used as an index: 0 day, 1 night)
 
 // The rooms patients can be sent to after A&E. Each takes a set number of
 // patients at once for a set time; anyone else waits in that room's queue.
@@ -101,6 +99,38 @@ typedef struct {
     int total;               // how many the hospital has
     int inUse;               // how many are with a patient now
 } Equipment;
+
+// ---- The setup for a day, chosen on the setup screen ----
+// The kind of day it is.
+typedef enum {
+    SCENARIO_NORMAL,         // an ordinary day
+    SCENARIO_FLU,            // flu season: more patients all day and night
+    SCENARIO_MAJOR_INCIDENT, // a bus crash during the day shift: a wave of casualties
+    SCENARIO_COUNT
+} Scenario;
+
+#define EQUIP_MAX_EACH 7     // the most of any one piece of equipment
+
+typedef struct {
+    Scenario scenario;
+    int nurses[2];           // nurses on the day shift [SHIFT_DAY] and the night shift [SHIFT_NIGHT]
+    int doctors[2];          // ...and doctors (not counting the on-call doctor)
+    int beds;                // A&E beds open, not counting the resus bay (up to BED_COUNT - 1)
+    int equipment[EQUIP_TYPES]; // how many of each piece of equipment
+    bool powerCuts;          // can the power go off by itself (C still cuts it either way)
+} Setup;
+
+// The usual setup: 4 nurses and 2 doctors by day, 2 and 1 at night, all 8
+// beds, the usual equipment, an ordinary day, power cuts on.
+void sim_default_setup(Setup *setup);
+
+// Keep a setup within the limits (so a bad one can't break anything).
+void sim_clamp_setup(Setup *setup);
+
+// The smallest and largest number allowed for each thing on the setup screen.
+#define SETUP_NURSES_MIN    1
+#define SETUP_DOCTORS_MIN   1
+#define SETUP_BEDS_MIN      3
 
 typedef struct {
     const char *name;        // e.g. "X-ray"
@@ -143,6 +173,42 @@ typedef struct {
     float dischargeTime;             // clock time they left
 } TreatedRecord;
  
+// ---- Power cuts ----
+// When the power goes, the emergency lighting comes on and the backup
+// generator starts after GENERATOR_START seconds. Sometimes it doesn't start
+// (GENERATOR_FAIL_CHANCE %): then someone has to start it by hand (the
+// generator game, which main.c opens). If that fails too, the electricians
+// get it going after GENERATOR_FIX seconds. While the power is off:
+//   the scanners (X-ray, CT and MRI) stop, and their patients wait in them;
+//   the lifts stop, so anyone on their way to or from upstairs is stuck;
+//   treatment in A&E goes on under the emergency lights, a little slower.
+// Ventilators and monitors run on their batteries, so nobody loses those.
+typedef enum { POWER_ON, POWER_OUT } PowerState;
+#define GENERATOR_START        2.5f   // seconds (10 minutes) for the generator to start
+#define GENERATOR_FAIL_CHANCE  35     // % of power cuts where it doesn't start by itself
+#define GENERATOR_FIX         10.0f   // seconds (40 minutes) for the electricians, if the game fails
+#define POWER_CUT_CHANCE       30     // % chance of a power cut by itself in a shift (if they're on)
+#define DARK_TREATMENT_SPEED  0.75f   // treatment speed under the emergency lights
+
+// ---- What happened when, for the graphs on the report ----
+// The waiting room is sampled every SAMPLE_EVERY seconds (10 minutes), and
+// the things that happened are noted with their time.
+#define SAMPLE_EVERY  2.5f
+#define SAMPLES       73        // (SHIFT_LENGTH / SAMPLE_EVERY) + 1: from 07:00 to 19:00 every 10 minutes
+#define MAX_EVENTS    40
+typedef enum {
+    EVENT_HELI_LANDED,       // a rescue helicopter landed
+    EVENT_ON_CALL,           // the on-call doctor came in
+    EVENT_POWER_OFF,         // the power went off
+    EVENT_POWER_ON,          // ...and came back (the generator started)
+    EVENT_INCIDENT,          // a major incident: the casualties started arriving
+    EVENT_TYPES
+} EventType;
+typedef struct {
+    float time;              // seconds since the shift started
+    EventType type;
+} ShiftEvent;
+
 // The numbers for one shift, shown on the end-of-shift report.
 typedef struct {
     int arrived;             // patients who came in during the shift
@@ -181,6 +247,25 @@ typedef struct {
     int drivesSlow;          // ...arrived too slowly
     int landingsPlayed;      // the helicopter landing game, on real rescues
     int landingsFailed;      // ...hard landings, or out of time
+    int generatorGames;      // the generator wouldn't start and you had a go at it
+    int generatorFailed;     // ...and couldn't get it going
+
+    // Power cuts
+    int powerCuts;           // times the power went off
+    float powerOffTime;      // seconds without power (until the generator started)
+    int scansHeld;           // patients stuck in a scanner when the power went
+    int liftStuck;           // patients stuck in the lifts when the power went
+
+    // A major incident
+    int incidentCasualties;  // casualties brought in
+
+    // The graphs: the waiting room every SAMPLE_EVERY seconds, and what happened when
+    int samples;                     // how many taken so far
+    int sampleWaiting[SAMPLES];      // patients in the waiting room
+    float sampleAvgWait[SAMPLES];    // average wait for a bed so far (seconds)
+    int sampleInBeds[SAMPLES];       // A&E beds in use
+    ShiftEvent events[MAX_EVENTS];
+    int eventCount;
 
     // Equipment
     float equipBusyTime[EQUIP_TYPES];    // item-seconds in use (for the % busy)
@@ -195,10 +280,11 @@ typedef struct {
 } ShiftStats;
  
 typedef struct {
+    Setup setup;             // staffing, beds, equipment and the kind of day (fixed for the day)
     Patient *waiting;        // head of the waiting queue (most urgent first)
     int waitingCount;
     Bed beds[BED_COUNT];
-    Nurse nurses[NURSE_COUNT];
+    Nurse nurses[NURSE_MAX];
     Doctor doctors[DOCTOR_SLOTS];  // the shift's doctors, then a place for one on call
     bool onCall;             // an on-call doctor is in
     float onCallComing;      // seconds until the on-call doctor arrives (< 0: nobody called)
@@ -207,6 +293,19 @@ typedef struct {
     float clock;             // simulated seconds since 07:00 at the start of the day
     float nextArrival;       // clock time of the next random arrival
     float nextRescue;        // clock time of the next helicopter rescue (< 0: none)
+
+    // Power
+    PowerState power;
+    float powerTimer;        // power off: seconds until the generator starts
+    bool generatorStuck;     // power off and the generator didn't start: the generator game is needed
+    float nextPowerCut;      // clock time of the next power cut by itself (< 0: none)
+    float powerBackAt;       // clock time the power last came back (the lights flicker on), or < 0
+
+    // A major incident (the bus crash scenario)
+    float incidentAt;        // clock time the casualties start arriving (< 0: none)
+    int incidentLeft;        // casualties still to arrive
+    float incidentNext;      // clock time of the next one
+    float incidentSince;     // clock time it started (for the banner), or < 0
     int nextId;
 
     SimRoom rooms[ROOM_TYPES];   // X-ray, MRI, bloods, theatre, the ward and the rooms upstairs
@@ -226,9 +325,17 @@ typedef struct {
     int treatedLogCapacity;  // records allocated
 } Sim;
  
-// Start a new day: an empty department at 07:00, day shift on.
+// Start a new day: an empty department at 07:00, day shift on, set up as
+// `setup` says (NULL for the usual setup).
 // Only call on a new Sim or after sim_free, or the treatment log leaks.
-void sim_init(Sim *sim, int day);
+void sim_init(Sim *sim, int day, const Setup *setup);
+
+// Nurses on this shift, and the shift's own doctors (not the on-call one).
+int sim_nurses_on(const Sim *sim);
+int sim_shift_doctors(const Sim *sim);
+
+// Is this A&E bed open today? (The resus bay always is.)
+bool sim_bed_open(const Sim *sim, int bed);
  
 // Hand over from the day shift to the night shift. Patients who are waiting
 // or in a bed stay where they are; the shift statistics and the treatment
@@ -250,6 +357,7 @@ void sim_add_rescue(Sim *sim);
 void sim_surgery_result(Sim *sim, int id, bool won);
 
 // Doctors on duty now: the shift's doctors, plus the on-call doctor if they're in.
+// (Their places in sim->doctors: the shift's doctors first, then the on-call one.)
 int sim_doctors_on(const Sim *sim);
 
 // Helicopter rescues on their way in (not landed yet).
@@ -304,6 +412,29 @@ int sim_ambulance_arrival(Sim *sim, bool fast);
 // the air. Won: a smooth landing and a quick handover, so their treatment in
 // A&E takes 40% less. Lost: a rough landing, so it takes 25% longer.
 void sim_landing_result(Sim *sim, int id, bool won);
+
+// ---- Power ----
+// Cut the power now (the C key, or by itself during a shift). Nothing
+// happens if it's already off.
+void sim_power_cut(Sim *sim);
+
+// Is the generator waiting to be started by hand? (main.c opens the generator game.)
+bool sim_generator_needed(const Sim *sim);
+
+// The result of the generator game. Won: it starts in a moment. Lost: the
+// power stays off until the electricians fix it (GENERATOR_FIX seconds).
+void sim_generator_result(Sim *sim, bool won);
+
+// The lights for the frame: 1 normal, 0 the power's off (emergency lights),
+// and flickering in between for a moment when it comes back on.
+float sim_lights(const Sim *sim);
+
+// Seconds since the start of the current shift.
+float sim_shift_time(const Sim *sim);
+
+// Names for the scenarios and the events, e.g. "Flu season", "Power off".
+const char *sim_scenario_name(Scenario s);
+const char *sim_event_name(EventType e);
 
 // Patients in a room or waiting for one, across every room.
 int sim_patients_in_rooms(const Sim *sim);

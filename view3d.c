@@ -102,9 +102,14 @@ static float liftCarY = 0.0f;
 static float liftDoors[FLOORS];
 
 // ---- Where each member of staff is standing; they walk between spots ----
-static Vector3 nursePos[NURSE_COUNT];
+static Vector3 nursePos[NURSE_MAX];
 static Vector3 doctorPos[DOCTOR_SLOTS];
 static bool    onCallWasIn = false;    // to see the on-call doctor arrive
+
+// Where free staff wait at the nurses' station: nurses along the left of the
+// desk, doctors along the right (closer together when there are more of them)
+static Vector3 station_nurse(int k)  { return v3(-3.4f + k * 0.7f, 0, DESK_Z + 0.9f); }
+static Vector3 station_doctor(int k) { return v3( 1.0f + k * 0.75f, 0, DESK_Z + 0.9f); }
 static bool    staffPlaced = false;
 
 static bool night = false;      // set each frame: the night shift is on
@@ -315,6 +320,15 @@ void glow(float x, float z, float radius, Color c)
         rlColor4ub(c.r, c.g, c.b, 0);    rlVertex3f(x + cosf(a1) * radius, 0.03f, z + sinf(a1) * radius);
     }
     rlEnd();
+}
+
+// The same on a floor upstairs: y is the height of that floor
+static void glow_at(float x, float y, float z, float radius, Color c)
+{
+    rlPushMatrix();
+    rlTranslatef(0, y, 0);
+    glow(x, z, radius, c);
+    rlPopMatrix();
 }
 
 // ------------------------------------------------------------------------
@@ -2851,7 +2865,7 @@ static void hud(const Sim *sim, float speed, bool paused)
 
     // Stats card, top right
     int busyN = 0, busyD = 0;
-    for (int k = 0; k < NURSES_ON(sim->shift); k++)  if (sim->nurses[k].busyWithBed != -1) busyN++;
+    for (int k = 0; k < sim_nurses_on(sim); k++)  if (sim->nurses[k].busyWithBed != -1) busyN++;
     for (int k = 0; k < sim_doctors_on(sim); k++) if (sim->doctors[k].busyWithBed != -1) busyD++;
     int hh, mm;
     sim_time_of_day(sim, &hh, &mm);
@@ -2863,7 +2877,7 @@ static void hud(const Sim *sim, float speed, bool paused)
              x, y, 18, text);                                                          y += 28;
     DrawText(TextFormat("Waiting      %d", sim->waitingCount), x, y, 16, soft);       y += 22;
     DrawText(TextFormat("Treated      %d", sim->stats.treated), x, y, 16, soft);      y += 22;
-    DrawText(TextFormat("Nurses busy  %d / %d", busyN, NURSES_ON(sim->shift)), x, y, 16, soft);   y += 22;
+    DrawText(TextFormat("Nurses busy  %d / %d", busyN, sim_nurses_on(sim)), x, y, 16, soft);   y += 22;
     DrawText(TextFormat("Doctors busy %d / %d%s", busyD, sim_doctors_on(sim), sim->onCall ? " +on call" : ""), x, y, 16,
              sim->onCall ? C_EMERGENCY : soft);                                                               y += 22;
     DrawText(TextFormat("Speed        %.1fx", speed), x, y, 16, soft);
@@ -2904,7 +2918,7 @@ static void hud(const Sim *sim, float speed, bool paused)
     DrawText(number_key_help(), 20, (int)hudH - 70, 14, soft);
     DrawText("Drag to turn   Right-drag to move   Scroll to zoom   Click a patient to follow   T cinematic tour   F floors",
              20, (int)hudH - 50, 14, soft);
-    DrawText("V 2D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   G games (or O S X P)   M mute",
+    DrawText("V 2D view   SPACE pause   UP/DOWN speed   E emergency   H helicopter   C power cut   G games (or O S X P)   M mute",
              20, (int)hudH - 30, 14, soft);
 }
 
@@ -3001,28 +3015,28 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
 
     // Where everyone should be standing: by their bed, or at the station.
     if (!staffPlaced) {
-        for (int k = 0; k < NURSE_COUNT; k++)  nursePos[k]  = v3(-3.0f + k * 1.0f, 0, DESK_Z + 0.9f);
-        for (int k = 0; k < DOCTOR_SLOTS; k++) doctorPos[k] = v3( 1.6f + k * 1.0f, 0, DESK_Z + 0.9f);
+        for (int k = 0; k < NURSE_MAX; k++)    nursePos[k]  = station_nurse(k);
+        for (int k = 0; k < DOCTOR_SLOTS; k++) doctorPos[k] = station_doctor(k);
         staffPlaced = true;
     }
     // Staff go to their patient's bed once the patient is there; until then
     // (or with nobody to see) they wait at the nurses' station.
     // The on-call doctor comes in through the front doors when they're called in
-    if (sim->onCall && !onCallWasIn) doctorPos[DOCTORS_ON(sim->shift)] = v3(DOOR_X - 0.3f, 0, 3.5f);
+    if (sim->onCall && !onCallWasIn) doctorPos[sim_shift_doctors(sim)] = v3(DOOR_X - 0.3f, 0, 3.5f);
     onCallWasIn = sim->onCall;
-    Vector3 nurseTarget[NURSE_COUNT], doctorTarget[DOCTOR_SLOTS];
-    int nurseBed[NURSE_COUNT], doctorBed[DOCTOR_SLOTS];
-    for (int k = 0; k < NURSE_COUNT; k++) {
+    Vector3 nurseTarget[NURSE_MAX], doctorTarget[DOCTOR_SLOTS];
+    int nurseBed[NURSE_MAX], doctorBed[DOCTOR_SLOTS];
+    for (int k = 0; k < NURSE_MAX; k++) {
         nurseBed[k] = staff_bed(sim, sim->nurses[k].busyWithBed);
         int b = nurseBed[k];
         nurseTarget[k] = (b != -1) ? bed_point(b, 0.30f, 0, 1.55f)              // foot of the bed
-                                   : v3(-3.0f + k * 1.0f, 0, DESK_Z + 0.9f);    // at the station
+                                   : station_nurse(k);                         // at the station
     }
     for (int k = 0; k < DOCTOR_SLOTS; k++) {
         doctorBed[k] = staff_bed(sim, sim->doctors[k].busyWithBed);
         int b = doctorBed[k];
         doctorTarget[k] = (b != -1) ? bed_point(b, -0.30f, 0, 1.55f)
-                                    : v3(1.6f + k * 1.0f, 0, DESK_Z + 0.9f);
+                                    : station_doctor(k);
     }
 
     // The sky: a soft gradient that follows the time of day and the weather
@@ -3072,7 +3086,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         }
 
         // The staff keep moving whichever floor is being looked at
-        for (int k = 0; k < NURSES_ON(sim->shift); k++) {
+        for (int k = 0; k < sim_nurses_on(sim); k++) {
             bool walking = is_walking(nursePos[k], nurseTarget[k]);
             Facing face = walking ? facing_for(nursePos[k], nurseTarget[k])
                                   : (nurseBed[k] == RESUS_BED ? FACE_EAST : nurseBed[k] != -1 ? FACE_NORTH : FACE_SOUTH);
@@ -3098,15 +3112,26 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         // Light. By day, soft pools under the ceiling lights. As it gets dark
         // the lamps come on: one over each patient, the station lamp, the doors,
         // and the street lamps outside.
+        // In a power cut the ceiling lights and lamps go out (sim_lights is 0),
+        // and red emergency lights glow along the corridors instead.
+        float mains = sim_lights(sim);
         BeginBlendMode(BLEND_ADDITIVE);
-            unsigned char dayA = (unsigned char)(22 * (1.0f - darkness));
+            if (mains < 0.5f && viewFloor < VIEW_OUTSIDE) {
+                float pulse = 0.7f + 0.3f * sinf((float)GetTime() * 3.0f);
+                float y = viewFloor * FLOOR_H;
+                for (int gx = -8; gx <= 8; gx += 4)
+                    glow_at((float)gx, y, -5.9f, 2.2f, (Color){ 255, 40, 30, (unsigned char)(70 * pulse) });
+                glow_at(-8.9f, y, 0.0f, 2.4f, (Color){ 255, 40, 30, (unsigned char)(70 * pulse) });
+                glow_at(0.0f, y, 3.0f, 2.6f, (Color){ 255, 40, 30, (unsigned char)(60 * pulse) });
+            }
+            unsigned char dayA = (unsigned char)(22 * (1.0f - darkness) * mains);
             if (dayA > 1 && ground) {
                 for (int gx = -6; gx <= 6; gx += 4) {
                     glow((float)gx, -2.6f, 2.4f, (Color){ 255, 255, 255, dayA });
                     glow((float)gx,  3.6f, 2.4f, (Color){ 255, 255, 255, dayA });
                 }
             }
-            float lampK = night ? 1.0f : smooth(0.4f, 0.9f, darkness);    // lamps fade up at dusk
+            float lampK = (night ? 1.0f : smooth(0.4f, 0.9f, darkness)) * mains;   // lamps fade up at dusk
             if (lampK > 0.01f && ground) {
                 for (int i = 0; i < BED_COUNT; i++) {
                     if (sim->beds[i].occupant) glow(bed_centre(i).x, bed_centre(i).z + 0.2f, 1.7f, (Color){ 255, 200, 120, (unsigned char)(70 * lampK) });
@@ -3117,8 +3142,10 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
             }
             lamp_glows();
             outside3d_lights(viewFloor);
-            if (ground) rooms3d_lights(sim);
-            else if (viewFloor < VIEW_OUTSIDE) floors3d_lights(sim, viewFloor);
+            if (mains > 0.5f) {                      // (the rooms' lights are off in a power cut)
+                if (ground) rooms3d_lights(sim);
+                else if (viewFloor < VIEW_OUTSIDE) floors3d_lights(sim, viewFloor);
+            }
             vehicle_glows();
         EndBlendMode();
 
@@ -3133,6 +3160,7 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     Camera2D hudCam = { 0 };
     hudCam.zoom = ui;
     BeginMode2D(hudCam);
+    draw_power_overlay(sim, hudW, hudH, false);      // dark, with red emergency lighting, in a power cut
     Color tagBg = night ? (Color){ 30, 38, 56, 210 } : (Color){ 255, 255, 255, 210 };
     Color tagFg = night ? (Color){ 225, 232, 245, 255 } : C_INK;
     int hoverBed = -1;
@@ -3140,8 +3168,9 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
 
     for (int i = 0; i < BED_COUNT && ground; i++) {
         const Patient *bp = sim->beds[i].occupant;
-        if (i == RESUS_BED) label("Resus", bed_point(i, 0, 1.30f, -1.10f), cam, 14, WHITE, C_EMERGENCY);
-        else                label(TextFormat("Bed %d", i + 1), bed_point(i, 0, 1.30f, -1.10f), cam, 14, tagFg, tagBg);
+        if (i == RESUS_BED)              label("Resus", bed_point(i, 0, 1.30f, -1.10f), cam, 14, WHITE, C_EMERGENCY);
+        else if (!sim_bed_open(sim, i))  label(TextFormat("Bed %d closed", i + 1), bed_point(i, 0, 1.30f, -1.10f), cam, 14, WHITE, (Color){ 120, 128, 140, 255 });
+        else                             label(TextFormat("Bed %d", i + 1), bed_point(i, 0, 1.30f, -1.10f), cam, 14, tagFg, tagBg);
         if (bp && !view3d_patient_walking(bp->id)) {    // only once they've reached the bed
             float done = 1.0f - bp->treatmentLeft / bp->treatmentTotal;
             bool stalled = bp->needsDoctor && sim_doctor_at(sim, i) == -1;
@@ -3161,13 +3190,13 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
         BoundingBox box = { v3(c.x - hx, 0, c.z - hz), v3(c.x + hx, 1.0f, c.z + hz) };
         if (GetRayCollisionBox(ray, box).hit) hoverBed = i;
     }
-    for (int k = 0; k < NURSES_ON(sim->shift) && ground; k++) {
+    for (int k = 0; k < sim_nurses_on(sim) && ground; k++) {
         float h = 1.8f + (k % 2) * 0.3f;   // every second tag a little higher, so neighbours don't overlap
         label(sim->nurses[k].name, v3(nursePos[k].x, h, nursePos[k].z), cam, 12, WHITE, C_BRAND);
     }
     for (int k = 0; k < sim_doctors_on(sim) && ground; k++) {
         float h = 2.1f + (k % 2) * 0.3f;   // doctors' tags sit above the nurses'
-        bool onCall = (k >= DOCTORS_ON(sim->shift));
+        bool onCall = (k >= sim_shift_doctors(sim));
         label(TextFormat(onCall ? "Dr %s (on call)" : "Dr %s", sim->doctors[k].name), v3(doctorPos[k].x, h, doctorPos[k].z),
               cam, 12, WHITE, onCall ? C_EMERGENCY : C_INK);
     }
@@ -3180,6 +3209,8 @@ void view3d_draw(const Sim *sim, float speed, bool paused)
     hud(sim, speed, paused);
     if (hoverBed != -1 && !IsMouseButtonDown(MOUSE_BUTTON_LEFT)) bed_tooltip(sim, hoverBed);
     draw_rescue_banner(sim, (int)hudW / 2, 72);     // e.g. "COAST GUARD RESCUE INBOUND"
+    draw_incident_banner(sim, (int)hudW / 2, 110);  // "MAJOR INCIDENT..."
+    draw_power_status(sim, (int)hudW / 2, (int)hudH / 2 - 60);   // "POWER CUT: generator starting"
     game_bubbles(sim, cam);                         // "SURGERY 38  O" over the rooms where a game is ready
     bool night = (sim->shift == SHIFT_NIGHT);
     minigames_draw_table(hudW - 230, 388, 216, 1, night ? (Color){ 30, 38, 56, 230 } : (Color){ 255, 255, 255, 230 },

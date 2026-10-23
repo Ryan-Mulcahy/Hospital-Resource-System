@@ -36,4 +36,14 @@ void draw_equipment_report(const Sim *sim);
 // True on the frame the "Back to report" button on the equipment page is clicked.
 bool report_equipment_back_clicked(void);
 
+// True on the frame the "Graphs" button is clicked.
+bool report_view_graphs_clicked(void);
+
+// The graphs page: the waiting room and the average wait across the shift,
+// with what happened when (helicopters, the on-call doctor, power cuts...).
+void draw_graphs_page(const Sim *sim);
+
+// True on the frame the "Back to report" button on the graphs page is clicked.
+bool report_graphs_back_clicked(void);
+
 #endif

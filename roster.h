@@ -11,8 +11,9 @@
 int roster_shift_number(int day, ShiftType shift);
 
 // Name of the k-th nurse or doctor on duty on a given shift.
-const char *roster_nurse(int shiftNumber, int k);
-const char *roster_doctor(int shiftNumber, int k);
+// (Which staff those are depends on how many are on each shift, in `setup`.)
+const char *roster_nurse(const Setup *setup, int shiftNumber, int k);
+const char *roster_doctor(const Setup *setup, int shiftNumber, int k);
 
 // Name of the doctor on call during a shift (called in when it gets busy).
 const char *roster_on_call(int shiftNumber);
@@ -23,7 +24,7 @@ void roster_assign(Sim *sim);
 
 // The roster screen, shown before a shift starts: who is on this shift and
 // who is on the next one. Call between BeginDrawing() and EndDrawing().
-void draw_roster_screen(int day, ShiftType shift);
+void draw_roster_screen(const Setup *setup, int day, ShiftType shift);
 
 // True on the frame the button to start the shift is clicked.
 bool roster_start_clicked(void);

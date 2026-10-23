@@ -42,6 +42,10 @@ void minigames_open_menu(void);
 // Go straight into one game, without the menu (the O, S, X and P keys).
 void minigames_start(Sim *sim, MiniGame game);
 
+// Open the generator game: the power's off and the generator didn't start
+// (main.c calls this when sim_generator_needed says so).
+void minigames_start_generator(Sim *sim);
+
 // Should the helicopter's rotor sound play? (While the landing game's flying.)
 bool minigames_rotor(void);
 

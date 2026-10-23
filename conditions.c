@@ -119,6 +119,14 @@ const Condition *conditions_random(int severity)
     return &fallback[severity - 1];   // not reached
 }
 
+const Condition *conditions_find(const char *name)
+{
+    for (int i = 0; i < count; i++) {
+        if (strcmp(table[i].name, name) == 0) return &table[i];
+    }
+    return NULL;
+}
+
 const Condition *conditions_rescue(RescueService *service)
 {
     int k = GetRandomValue(0, RESCUE_COUNT - 1);
